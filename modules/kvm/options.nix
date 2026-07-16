@@ -948,7 +948,7 @@ let
     };
 in
 {
-  imports = [ ../service-networking/options.nix ];
+  imports = [];
 
   options.cfg.kvm.host = {
     cpuVendor = mkOption {
@@ -1135,8 +1135,10 @@ in
                       before VM start and rebinds them after VM stop.
                     - "libvirt-nosleep": inhibits host sleep while any VM is running.
 
-                    The nix-sync hook (enforces Nix-defined XML on every VM start)
-                    is always enabled and cannot be disabled via this option.
+                    Drift prevention (reverting imperative XML edits made via
+                    `virsh edit` / virt-manager back to the Nix-defined config) is
+                    always active and is not a hook — it is implemented per guest
+                    via a systemd path unit that watches the stored domain XML.
                   '';
                 };
                 qemu = mkOption {
