@@ -19,6 +19,57 @@ let
           description = "Whether to enable this guest.";
         };
 
+        # ───── Specialized Configurations ─────
+        antiDetection = mkOption {
+          type = types.submodule {
+            options = {
+              enable = mkOption {
+                type = types.bool;
+                default = false;
+                description = "Enable Zero-Trace Hypervisor Cloaking (Anti-VM Detection).";
+              };
+            };
+          };
+          default = { };
+          description = "Anti-VM Detection (Camouflage) configuration.";
+        };
+
+        paravirtGraphics = mkOption {
+          type = types.submodule {
+            options = {
+              enable = mkOption {
+                type = types.bool;
+                default = false;
+                description = "Enable paravirtualized 3D graphics proxying to abstract the host GPU.";
+              };
+              backend = mkOption {
+                type = types.enum [
+                  "venus"
+                  "virgl"
+                ];
+                default = "venus";
+                description = ''
+                  The VirtIO-GPU backend to use. 
+                  - 'venus': Proxies Vulkan (best for Windows gaming/Proton via DXVK).
+                  - 'virgl': Proxies OpenGL (legacy compatibility).
+                '';
+              };
+            };
+          };
+          default = { };
+          description = "Paravirtualized graphics API proxying (VirtIO-GPU) configuration.";
+        };
+
+        domainName = mkOption {
+          type = types.str;
+          description = ''
+            The permanent, internal name of the VM used by Libvirt. This MUST be set and should NEVER be changed 
+            after creation. Changing this will create a brand new VM and orphan your old disks, as well as change 
+            its cryptographic Hardware ID.
+            Must be 3-32 characters long and contain only letters, numbers, hyphens, and underscores.
+          '';
+        };
+
         # ───── Compute ─────
         memory = mkOption {
           type = types.ints.positive;
@@ -200,15 +251,6 @@ let
                 type = types.nullOr types.str;
                 default = null;
                 description = "SMBIOS system serial number.";
-              };
-              uuid = mkOption {
-                type = types.nullOr types.str;
-                default = null;
-                description = ''
-                  SMBIOS system UUID. When null, libvirt generates a
-                  stable UUID from the domain name.
-                '';
-                example = "12345678-1234-1234-1234-123456789abc";
               };
               family = mkOption {
                 type = types.nullOr types.str;
@@ -951,6 +993,28 @@ in
   imports = [];
 
   options.cfg.kvm.host = {
+    hwidSeed = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        A mandatory, secret string used as a cryptographic seed for generating deterministic 
+        Hardware IDs (SMBIOS UUIDs, Serials, Motherboard Profiles, and MAC addresses).
+        Generate one using `uuidgen` and paste it here.
+        
+        This option ensures that your virtual machines maintain the exact same hardware 
+        fingerprint even if you reinstall NixOS or change your host's hostname.
+        
+        WARNING: Changing this seed, or changing a guest's `domainName`, will mathematically 
+        regenerate all its hardware identifiers. This will trigger Windows reactivation 
+        and can trigger "HWID Spoofing" bans in strict anti-cheats (like Vanguard/EAC). 
+        Generate this once and never change it.
+        
+        RESOLUTION: If you MUST rename a VM but want to keep its HWID to prevent bans, 
+        run `virsh dumpxml <old-name>` before renaming, copy the UUID, Serial, and 
+        Manufacturer strings, and hardcode them into the guest's `smbios` options.
+      '';
+    };
+
     cpuVendor = mkOption {
       type = types.enum [
         "intel"

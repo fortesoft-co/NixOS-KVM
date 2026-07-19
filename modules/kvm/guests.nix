@@ -19,10 +19,10 @@ let
     name: guest:
     if cfg.host.storage.persistentPath != null then
       "${cfg.host.storage.persistentPath}/guests/${
-        if guest.storagePath != null then guest.storagePath else name
+        if guest.storagePath != null then guest.storagePath else guest.domainName
       }"
     else
-      "/var/lib/libvirt/qemu/${name}";
+      "/var/lib/libvirt/qemu/${guest.domainName}";
 
   # Resolve a disk path — relative name joins with storage dir + format extension,
   # absolute paths are used as-is.
@@ -97,13 +97,37 @@ let
   # network-config) so both reference the exact MAC the NIC receives.
   macFor =
     name: net: i:
+    let
+      guest = cfg.guests.${name};
+      seedPrefix = cfg.host.hwidSeed;
+      h = builtins.hashString "sha256" "${seedPrefix}-${guest.domainName}-${toString i}";
+    in
     if net.mac != null then
       net.mac
     else
-      let
-        h = builtins.hashString "sha256" "${name}-${toString i}";
-      in
       "52:54:00:${substring 0 2 h}:${substring 2 2 h}:${substring 4 2 h}";
+
+  # Converts a hexadecimal string slice (up to ~14 chars max) to a Base-10 Integer.
+  hexToInt = hex:
+    let
+      hexMap = {
+        "0" = 0; "1" = 1; "2" = 2; "3" = 3; "4" = 4; "5" = 5; "6" = 6; "7" = 7;
+        "8" = 8; "9" = 9; "a" = 10; "b" = 11; "c" = 12; "d" = 13; "e" = 14; "f" = 15;
+      };
+      chars = stringToCharacters (toLower hex);
+      folder = acc: char: (acc * 16) + hexMap.${char};
+    in
+    foldl' folder 0 chars;
+
+  # A dictionary of authentic, consumer-grade motherboard profiles to randomize between.
+  smbiosProfiles = [
+    { manufacturer = "ASUSTeK COMPUTER INC."; product = "ROG STRIX B550-F GAMING"; version = "Rev X.0x"; family = "ROG System"; }
+    { manufacturer = "Micro-Star International Co., Ltd."; product = "MAG B650 TOMAHAWK WIFI"; version = "1.0"; family = "MSI MB"; }
+    { manufacturer = "Gigabyte Technology Co., Ltd."; product = "B650 AORUS ELITE AX"; version = "x.x"; family = "AORUS MB"; }
+    { manufacturer = "ASRock"; product = "X670E Taichi"; version = "Any"; family = "ASRock MB"; }
+    { manufacturer = "ASUSTeK COMPUTER INC."; product = "TUF GAMING X570-PLUS (WI-FI)"; version = "Rev X.0x"; family = "TUF System"; }
+    { manufacturer = "Micro-Star International Co., Ltd."; product = "PRO Z790-A WIFI"; version = "1.0"; family = "MSI MB"; }
+  ];
 
   # ───────── XML generation ─────────
 
@@ -111,18 +135,21 @@ let
     name: guest:
     let
       sdir = storageDir name guest;
+      
+      seedPrefix = cfg.host.hwidSeed;
+      baseHash = builtins.hashString "sha256" "${seedPrefix}-${guest.domainName}";
 
       # Deterministic UUID from domain name — stable across rebuilds so
       # virsh define updates the existing domain instead of creating a new one.
-      # Override via smbios.uuid if the user specifies one.
       domainUuid =
-        if guest.smbios.uuid != null then
-          guest.smbios.uuid
-        else
-          let
-            h = builtins.hashString "sha256" name;
-          in
-          "${substring 0 8 h}-${substring 8 4 h}-${substring 12 4 h}-${substring 16 4 h}-${substring 20 12 h}";
+        let
+          p1 = substring 0 8 baseHash;
+          p2 = substring 8 4 baseHash;
+          p3 = "4${substring 13 3 baseHash}"; # Force UUID v4 format
+          p4 = "8${substring 17 3 baseHash}"; # Force RFC 4122 variant
+          p5 = substring 20 12 baseHash;
+        in
+        "${p1}-${p2}-${p3}-${p4}-${p5}";
 
       # OS / firmware
       osXML =
@@ -150,7 +177,12 @@ let
           <acpi/>
           <apic/>
           ${optionalString guest.secureBoot "<smm state='on'/>"}
-          ${optionalString guest.cpu.hidden "<kvm><hidden state='on'/></kvm>"}
+          ${optionalString (guest.cpu.hidden || guest.antiDetection.enable) "<kvm><hidden state='on'/></kvm>"}
+          ${optionalString guest.antiDetection.enable ''
+            <hyperv>
+              <vendor_id state='on' value='GenuineIntel'/>
+            </hyperv>
+          ''}
         </features>'';
 
       # CPU
@@ -164,18 +196,31 @@ let
           "<model>${guest.cpu.reportedModel}</model>"
         else
           "";
+      effectiveCpuFlags = guest.cpu.flags ++ (optionals guest.antiDetection.enable [{ name = "hypervisor"; policy = "disable"; }]);
       cpuFlagsXML = concatMapStrings (
         f: "<feature policy='${f.policy}' name='${f.name}'/>"
-      ) guest.cpu.flags;
+      ) effectiveCpuFlags;
+      
+      effectiveCpuMode = if guest.antiDetection.enable then "host-passthrough" else guest.cpu.mode;
       cpuXML = ''
-        <cpu mode='${guest.cpu.mode}' check='none'>
+        <cpu mode='${effectiveCpuMode}' check='none'>
           ${cpuModelXML}
           ${topologyXML}
           ${cpuFlagsXML}
         </cpu>'';
 
       # Hard disks + CD-ROMs (boot orders auto-assigned)
-      disksWithBoot = assignBootOrders guest.disks;
+      effectiveDisks = if guest.antiDetection.enable then
+        map (d: d // { 
+          bus = "sata";
+          # Strip VirtIO-specific performance flags that cause SATA validation failures
+          iothread = null;
+          aio = null;
+          discard = null;
+        }) guest.disks
+      else
+        guest.disks;
+      disksWithBoot = assignBootOrders effectiveDisks;
       diskEntries = imap0 (
         i: disk:
         let
@@ -259,7 +304,9 @@ let
       portAttr =
         if guest.graphics.port != null then "port='${toString guest.graphics.port}'" else "autoport='yes'";
       graphicsEntry =
-        if guest.graphics.type == "none" then
+        if guest.paravirtGraphics.enable then
+          ""
+        else if guest.graphics.type == "none" then
           ""
         else
           let
@@ -281,7 +328,9 @@ let
 
       # Video
       videoEntry =
-        if guest.graphics.type == "none" && guest.video.model == "qxl" then
+        if guest.paravirtGraphics.enable then
+          ""
+        else if guest.graphics.type == "none" && guest.video.model == "qxl" then
           "<video><model type='none'/></video>"
         else
           "<video><model type='${guest.video.model}' heads='${toString guest.video.heads}'/></video>";
@@ -300,20 +349,41 @@ let
         "<clock ${attrs}/>";
 
       # SMBIOS
+      effectiveSmbios = if guest.antiDetection.enable then
+        let
+          syntheticSerial = toUpper (substring 32 14 baseHash);
+          
+          # Procedurally select a Motherboard Profile from the dictionary
+          slice = substring 46 7 baseHash;
+          profileIndex = lib.mod (hexToInt slice) (length smbiosProfiles);
+          selectedProfile = elemAt smbiosProfiles profileIndex;
+        in
+        {
+          manufacturer = if guest.smbios.manufacturer != null then guest.smbios.manufacturer else selectedProfile.manufacturer;
+          product = if guest.smbios.product != null then guest.smbios.product else selectedProfile.product;
+          version = if guest.smbios.version != null then guest.smbios.version else selectedProfile.version;
+          family = if guest.smbios.family != null then guest.smbios.family else selectedProfile.family;
+          serial = if guest.smbios.serial != null then guest.smbios.serial else syntheticSerial;
+          uuid = domainUuid;
+          sku = guest.smbios.sku;
+        }
+      else
+        guest.smbios;
+
       smbiosEntries = filter (s: s != "") [
         (optionalString (
-          guest.smbios.manufacturer != null
-        ) "<entry name='manufacturer'>${guest.smbios.manufacturer}</entry>")
+          effectiveSmbios.manufacturer != null
+        ) "<entry name='manufacturer'>${effectiveSmbios.manufacturer}</entry>")
         (optionalString (
-          guest.smbios.product != null
-        ) "<entry name='product'>${guest.smbios.product}</entry>")
+          effectiveSmbios.product != null
+        ) "<entry name='product'>${effectiveSmbios.product}</entry>")
         (optionalString (
-          guest.smbios.version != null
-        ) "<entry name='version'>${guest.smbios.version}</entry>")
-        (optionalString (guest.smbios.serial != null) "<entry name='serial'>${guest.smbios.serial}</entry>")
-        (optionalString (guest.smbios.uuid != null) "<entry name='uuid'>${guest.smbios.uuid}</entry>")
-        (optionalString (guest.smbios.family != null) "<entry name='family'>${guest.smbios.family}</entry>")
-        (optionalString (guest.smbios.sku != null) "<entry name='sku'>${guest.smbios.sku}</entry>")
+          effectiveSmbios.version != null
+        ) "<entry name='version'>${effectiveSmbios.version}</entry>")
+        (optionalString (effectiveSmbios.serial != null) "<entry name='serial'>${effectiveSmbios.serial}</entry>")
+        (optionalString (effectiveSmbios.uuid != null) "<entry name='uuid'>${effectiveSmbios.uuid}</entry>")
+        (optionalString (effectiveSmbios.family != null) "<entry name='family'>${effectiveSmbios.family}</entry>")
+        (optionalString (effectiveSmbios.sku != null) "<entry name='sku'>${effectiveSmbios.sku}</entry>")
       ];
       smbiosXML = optionalString (smbiosEntries != [ ]) ''
         <sysinfo type='smbios'>
@@ -375,21 +445,29 @@ let
       iothreadsXML = optionalString (maxIothread > 0) "<iothreads>${toString maxIothread}</iothreads>";
 
       # Extra QEMU args
-      qemuCmdline = optionalString (guest.extraQemuArgs != [ ]) ''
+      effectiveQemuArgs = if guest.paravirtGraphics.enable then
+        guest.extraQemuArgs ++ [
+          "-display" "egl-headless,rendernode=/dev/dri/renderD128"
+          "-device" "virtio-vga-gl,blob=on,${guest.paravirtGraphics.backend}=on,hostmem=1024M"
+        ]
+      else
+        guest.extraQemuArgs;
+
+      qemuCmdline = optionalString (effectiveQemuArgs != [ ]) ''
         <qemu:commandline>
-          ${concatMapStrings (a: "<qemu:arg value='${a}'/>") guest.extraQemuArgs}
+          ${concatMapStrings (a: "<qemu:arg value='${a}'/>") effectiveQemuArgs}
         </qemu:commandline>'';
 
       # Domain type attribute — use qemu namespace if we have extra args
       domainAttrs = optionalString (
-        guest.extraQemuArgs != [ ]
+        effectiveQemuArgs != [ ]
       ) " xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'";
     in
     ''
       <domain type='kvm'${domainAttrs}>
-        <name>${name}</name>
+        <name>${guest.domainName}</name>
         <uuid>${domainUuid}</uuid>
-        <description>DECLARATIVELY MANAGED by NixOS (cfg.kvm.guests.${name}). Edits made here (virsh edit / virt-manager) are automatically reverted to the Nix-defined config within seconds and will NOT take effect. To change this VM, edit the NixOS configuration and run `nixos-rebuild switch`. (virt-manager may briefly show a stale edited config for a running VM even after it has been reverted; the real configuration is always the Nix one — verify with `virsh dumpxml ${name}`.)</description>
+        <description>DECLARATIVELY MANAGED by NixOS (cfg.kvm.guests.${name}). Edits made here (virsh edit / virt-manager) are automatically reverted to the Nix-defined config within seconds and will NOT take effect. To change this VM, edit the NixOS configuration and run `nixos-rebuild switch`. (virt-manager may briefly show a stale edited config for a running VM even after it has been reverted; the real configuration is always the Nix one — verify with `virsh dumpxml ${guest.domainName}`.)</description>
         <memory unit='MiB'>${toString guest.memory}</memory>
         <vcpu>${toString guest.vcpus}</vcpu>
         ${iothreadsXML}
@@ -570,7 +648,7 @@ let
           echo "  expire: false" >> "$seedDir/user-data"
         ''}
         cat > "$seedDir/meta-data" <<'METADATA'
-        instance-id: ${name}
+        instance-id: ${guest.domainName}
         local-hostname: ${ci.hostname}
         METADATA
         ${optionalString (networkConfigYaml != "") ''
@@ -587,7 +665,7 @@ let
       passwordSecret = "kvm-guest-${name}-graphics-password";
       graphicsPasswordSetup = optionalString (guest.graphics.passwordAgePath != null) ''
         # Set graphics password from decrypted age secret
-        ${virsh} qemu-monitor-command ${name} -- \
+        ${virsh} qemu-monitor-command ${guest.domainName} -- \
           "{\"execute\": \"set_password\", \"arguments\": {\"protocol\": \"${guest.graphics.type}\", \"password\": \"$(cat ${
             config.age.secrets.${passwordSecret}.path
           })\"}}" \
@@ -616,6 +694,14 @@ let
         # Ensure storage directory exists
         mkdir -p "${sdir}"
 
+        ${optionalString guest.paravirtGraphics.enable ''
+          # Validate host-side permissions for direct rendering node
+          if [ ! -r /dev/dri/renderD128 ] || [ ! -w /dev/dri/renderD128 ]; then
+            echo "ERROR: Missing read/write privileges to /dev/dri/renderD128. Paravirtualized Graphics cannot initialize." >&2
+            exit 1
+          fi
+        ''}
+
         # Create disk images / download CD-ROMs if missing (existing disks are never recreated)
         ${diskCreation}
 
@@ -630,23 +716,23 @@ let
         # virt-manager). libvirt rewrites the file on every define even when
         # the content is unchanged, so we key on content (sha256), not mtime.
         mkdir -p /var/lib/kvm-sync
-        sha256sum /var/lib/libvirt/qemu/${name}.xml | cut -d' ' -f1 > /var/lib/kvm-sync/${name}.hash
+        sha256sum /var/lib/libvirt/qemu/${guest.domainName}.xml | cut -d' ' -f1 > /var/lib/kvm-sync/${guest.domainName}.hash
       '';
 
       script = ''
         # Only start if not already running (avoids error on service restart)
-        if ${virsh} domstate ${name} 2>/dev/null | grep -q "running"; then
-          echo "Domain ${name} is already running"
+        if ${virsh} domstate ${guest.domainName} 2>/dev/null | grep -q "running"; then
+          echo "Domain ${guest.domainName} is already running"
         else
-          ${virsh} start ${name}
+          ${virsh} start ${guest.domainName}
         fi
       '';
 
       postStart = graphicsPasswordSetup;
 
       preStop = ''
-        ${virsh} shutdown ${name} || \
-        ${virsh} destroy ${name} || true
+        ${virsh} shutdown ${guest.domainName} || \
+        ${virsh} destroy ${guest.domainName} || true
       '';
 
       serviceConfig = {
@@ -668,37 +754,38 @@ let
     name: guest:
     let
       xml = generateXML name guest;
-      xmlFile = pkgs.writeText "kvm-guest-${name}.xml" xml;
+      xmlFile = pkgs.writeText "kvm-guest-${name}-revert.xml" xml;
       virsh = "${config.virtualisation.libvirtd.package}/bin/virsh";
-      storedXml = "/var/lib/libvirt/qemu/${name}.xml";
-      hashFile = "/var/lib/kvm-sync/${name}.hash";
+      storedXml = "/var/lib/libvirt/qemu/${guest.domainName}.xml";
+      hashFile = "/var/lib/kvm-sync/${guest.domainName}.hash";
     in
     {
-      description = "Revert imperative edits to ${name}'s libvirt domain XML";
-      after = [ "libvirtd.service" ];
+      description = "Revert imperative edits to KVM guest: ${name}";
+      after = [ "kvm-guest-${name}.service" ];
       partOf = [ "kvm-guest-${name}.service" ];
-      path = [ config.virtualisation.libvirtd.package ];
+      path = [ pkgs.coreutils ];
       serviceConfig.Type = "oneshot";
       script = ''
-        mkdir -p /var/lib/kvm-sync
-        current=$(sha256sum ${storedXml} 2>/dev/null | cut -d' ' -f1 || echo "")
+        if [ ! -f ${storedXml} ]; then exit 0; fi
+        current=$(sha256sum ${storedXml} | cut -d' ' -f1)
         saved=$(cat ${hashFile} 2>/dev/null || echo "")
         if [ "$current" = "$saved" ]; then
           exit 0
         fi
-        echo "kvm-watch: reverting imperative edit to domain ${name}"
+        echo "kvm-watch: reverting imperative edit to domain ${guest.domainName}"
         ${virsh} define --file "${xmlFile}"
         sha256sum ${storedXml} | cut -d' ' -f1 > ${hashFile}
       '';
     };
 
-  mkWatchPath = name: {
-    description = "Watch ${name}'s libvirt domain XML for imperative edits";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "libvirtd.service" ];
-    partOf = [ "kvm-guest-${name}.service" ];
-    pathConfig.PathChanged = "/var/lib/libvirt/qemu/${name}.xml";
-  };
+  mkWatchPath =
+    name: guest: {
+      description = "Watch ${name}'s libvirt domain XML for imperative edits";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "libvirtd.service" ];
+      partOf = [ "kvm-guest-${name}.service" ];
+      pathConfig.PathChanged = "/var/lib/libvirt/qemu/${guest.domainName}.xml";
+    };
 in
 {
   config = mkMerge [
@@ -718,7 +805,7 @@ in
         path = [ config.virtualisation.libvirtd.package ];
         script =
           let
-            declaredGuests = builtins.attrNames (filterAttrs (_: g: g.enable) cfg.guests);
+            declaredGuests = mapAttrsToList (n: g: g.domainName) (filterAttrs (_: g: g.enable) cfg.guests);
             declaredStr = concatStringsSep " " declaredGuests;
           in
           ''
@@ -753,7 +840,7 @@ in
         // mapAttrs' (n: g: nameValuePair "kvm-guest-${n}-watch" (mkWatchService n g)) enabledGuests;
 
       systemd.paths = mapAttrs' (
-        n: g: nameValuePair "kvm-guest-${n}-watch" (mkWatchPath n)
+        n: g: nameValuePair "kvm-guest-${n}-watch" (mkWatchPath n g)
       ) enabledGuests;
 
       # ───────── Secrets via agenix (graphics + cloud-init passwords) ─────────
@@ -780,8 +867,15 @@ in
           allPciIds = concatLists (
             mapAttrsToList (_: g: map (d: d.id) g.passthrough.pci) (filterAttrs (_: g: g.enable) cfg.guests)
           );
+          
+          # Duplicate domainNames across guests
+          allDomainNames = mapAttrsToList (_: g: g.domainName) (filterAttrs (_: g: g.enable) cfg.guests);
         in
         [
+          {
+            assertion = unique allDomainNames == allDomainNames;
+            message = "Domain name conflict: multiple guests share the same domainName. Each guest MUST have a globally unique domainName.";
+          }
           {
             assertion = unique allPciIds == allPciIds;
             message = ''
@@ -799,6 +893,10 @@ in
                 [ ]
               else
                 [
+                  {
+                    assertion = builtins.match "^[a-zA-Z0-9_-]{3,32}$" g.domainName != null;
+                    message = "Guest ${name}: domainName '${g.domainName}' is invalid. It must be 3-32 characters long and contain only alphanumeric characters, hyphens, and underscores.";
+                  }
                   {
                     assertion = !(g.secureBoot && g.firmware != "uefi");
                     message = "Guest ${name}: secureBoot requires firmware = \"uefi\".";
@@ -835,6 +933,20 @@ in
                   {
                     assertion = !(g.clock.adjustment != null && g.clock.offset != "variable");
                     message = "Guest ${name}: clock.adjustment requires clock.offset = \"variable\".";
+                  }
+                  # Anti-Detection — enforce valid user overrides
+                  {
+                    assertion = !(
+                      g.antiDetection.enable && 
+                      (g.smbios.manufacturer != null || g.smbios.product != null || g.smbios.version != null || g.smbios.family != null) &&
+                      !(g.smbios.manufacturer != null && g.smbios.product != null && g.smbios.version != null && g.smbios.family != null)
+                    );
+                    message = "Guest ${name}: antiDetection is enabled. If you override any of the base SMBIOS fields (manufacturer, product, version, or family), you must provide ALL of them to avoid a mismatched hardware profile.";
+                  }
+                  # HWID Seed — universally enforce presence and UUID format
+                  {
+                    assertion = cfg.host.hwidSeed != null && builtins.match "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" cfg.host.hwidSeed != null;
+                    message = "Guest ${name} requires cfg.kvm.host.hwidSeed to be set to a valid 36-character UUID. Please open a terminal, run `uuidgen`, and paste the output into your host configuration. This guarantees your VM's Hardware IDs and MAC addresses survive host reinstalls.";
                   }
                   # RNG rate limiting — both bytes and period must be set together
                   {

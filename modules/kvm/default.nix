@@ -38,6 +38,11 @@ let
 
   iommuActive = cfg.host.kernel.iommu.enable || anyGuestPciPassthrough;
 
+  # ───────── Paravirt Graphics auto-detection ─────────
+  anyGuestParavirtGraphics = lib.any (g: g.paravirtGraphics.enable) (
+    builtins.attrValues cfg.guests
+  );
+
   # ───────── Bundled hook scripts ─────────
   gpuPassthroughHook = pkgs.writeShellScript "gpu-passthrough" (
     builtins.readFile ./libvirt_hooks/gpu-passthrough.sh
@@ -310,6 +315,22 @@ in
           }
         ''}
       '';
+    })
+
+    # ───────── Paravirtualized Graphics Host Setup ─────────
+    # Automatically prepares the host environment if any guest enables 3D proxying.
+    (mkIf anyGuestParavirtGraphics {
+      hardware.graphics = {
+        enable = true;
+        enable32Bit = true;
+      };
+
+      users.users.qemu-libvirtd = mkIf (!cfg.host.libvirtd.runAsRoot) {
+        extraGroups = [
+          "render"
+          "video"
+        ];
+      };
     })
   ];
 }
