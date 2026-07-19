@@ -232,6 +232,21 @@ in
       );
     }
 
+    # ───────── QEMU Anti-Detection Patching ─────────
+    # Pins and patches QEMU to strip hardcoded virtualization signatures from the binary.
+    (mkIf cfg.host.antiDetection.patchQemu {
+      virtualisation.libvirtd.qemu.package = pkgs.qemu.overrideAttrs (old: rec {
+        version = "10.2.2";
+        src = pkgs.fetchurl {
+          url = "https://download.qemu.org/qemu-${version}.tar.xz";
+          sha256 = "0xp1457v1hw5szf7gx942xvvk6pasarbqfijfam1f54wy9pjjjvq";
+        };
+        patches = (old.patches or []) ++ [
+          ./patches/qemu-${version}-anti-detection.patch
+        ];
+      });
+    })
+
     # ───────── Persistent storage: bind mount + storage pool ─────────
     # When persistentPath is set, bind-mount ${persistentPath}/host to
     # /var/lib/libvirt and register ${persistentPath}/guests as a libvirt pool.

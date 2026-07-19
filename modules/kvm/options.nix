@@ -1289,6 +1289,28 @@ in
       default = { };
       description = "Host networking.";
     };
+    antiDetection = mkOption {
+      type = types.submodule {
+        options = {
+          patchQemu = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Compiles a custom, pinned version of QEMU from source with anti-detection patches applied.
+              This mathematically guarantees that hardcoded signatures (like "QEMU Keyboard", "BOCHS", and "QEMU DVD-ROM") 
+              are purged from the ACPI tables and device descriptors.
+              
+              This currently pins QEMU to version 10.2.2 to ensure the patch applies flawlessly.
+              
+              WARNING: Enabling this requires your system to compile QEMU from source, which takes 10-30 minutes.
+            '';
+          };
+        };
+      };
+      default = { };
+      description = "Host-level Anti-VM Detection configurations.";
+    };
+
     tools = mkOption {
       type = types.submodule {
         options = {
