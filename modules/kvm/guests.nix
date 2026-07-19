@@ -261,6 +261,11 @@ let
         </disk>'';
 
       # Network interfaces
+      effectiveNetworks = if guest.antiDetection.enable then
+        map (n: n // { model = if n.model == "virtio" then "e1000e" else n.model; }) guest.networks
+      else
+        guest.networks;
+
       ifaceEntries = imap0 (i: net: ''
         <interface type='${net.type}'>
           ${optionalString (net.type == "bridge") "<source bridge='${net.source}'/>"}
@@ -268,7 +273,7 @@ let
           ${optionalString (net.type == "direct") "<source dev='${net.source}' mode='bridge'/>"}
           <mac address='${macFor name net i}'/>
           <model type='${net.model}'/>
-        </interface>'') guest.networks;
+        </interface>'') effectiveNetworks;
 
       # PCI passthrough
       pciEntries = map (dev: ''
@@ -321,19 +326,32 @@ let
             </graphics>'';
 
       # Input devices
-      inputEntries =
+      # If antiDetection is enabled, we completely avoid adding explicit USB tablets
+      # since libvirt will default to PS/2 which is stealthier than VirtIO/USB descriptors.
+      inputEntries = if guest.antiDetection.enable then
+        (optional guest.input.keyboard "<input type='keyboard' bus='ps2'/>")
+        ++ (optional guest.input.mouse "<input type='mouse' bus='ps2'/>")
+      else
         (optional guest.input.tablet "<input type='tablet' bus='usb'/>")
         ++ (optional guest.input.keyboard "<input type='keyboard' bus='ps2'/>")
         ++ (optional guest.input.mouse "<input type='mouse' bus='ps2'/>");
 
       # Video
+      # Anti-Detection: Avoid QXL and VirtIO, fallback to generic VGA if no proxying is used
+      effectiveVideoModel = if guest.antiDetection.enable && guest.video.model == "qxl" then
+        "vga"
+      else if guest.antiDetection.enable && guest.video.model == "virtio" then
+        "vga"
+      else
+        guest.video.model;
+
       videoEntry =
         if guest.paravirtGraphics.enable then
           ""
-        else if guest.graphics.type == "none" && guest.video.model == "qxl" then
+        else if guest.graphics.type == "none" && effectiveVideoModel == "qxl" then
           "<video><model type='none'/></video>"
         else
-          "<video><model type='${guest.video.model}' heads='${toString guest.video.heads}'/></video>";
+          "<video><model type='${effectiveVideoModel}' heads='${toString guest.video.heads}'/></video>";
 
       # Clock
       clockXML =
@@ -423,7 +441,7 @@ let
           "<rate bytes='${toString guest.rng.rateBytes}' period='${toString guest.rng.ratePeriod}'/>"
         else
           "";
-      rngXML = optionalString guest.rng.enable ''
+      rngXML = optionalString (guest.rng.enable && !guest.antiDetection.enable) ''
         <rng model='virtio'>
           ${rngRateXML}
           <backend model='random'>/dev/urandom</backend>
@@ -433,7 +451,7 @@ let
       watchdogXML = optionalString guest.watchdog.enable "<watchdog model='${guest.watchdog.model}' action='${guest.watchdog.action}'/>";
 
       # QEMU guest agent
-      agentXML = optionalString guest.agent.enable ''
+      agentXML = optionalString (guest.agent.enable && !guest.antiDetection.enable) ''
         <channel type='unix'>
           <target type='virtio' name='org.qemu.guest_agent.0'/>
         </channel>'';
@@ -493,6 +511,7 @@ let
           ${rngXML}
           ${watchdogXML}
           ${agentXML}
+          ${optionalString guest.antiDetection.enable "<memballoon model='none'/>"}
         </devices>
         ${optionalString (guest.extraXML != null) guest.extraXML}
         ${qemuCmdline}
