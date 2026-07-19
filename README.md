@@ -152,6 +152,7 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `enable` | bool | `true` | Disable a guest without removing its block. |
+| `domainName` | str | *Required* | Permanent Libvirt domain name. Changing this creates a new VM and breaks HWID persistence. |
 | `memory` | int | `2048` | MiB. |
 | `vcpus` | int | `2` | Virtual CPU count. |
 | `machineType` | str | `"q35"` | QEMU machine type. |
@@ -260,6 +261,13 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 | `graphics.clipboard` | bool | `false` | Clipboard sharing (SPICE only). |
 | `graphics.fileTransfer` | bool | `false` | File transfer (SPICE only). |
 
+#### Paravirtualized Graphics Options (`cfg.kvm.guests.<name>.paravirtGraphics`)
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `paravirtGraphics.enable` | bool | `false` | Enable 3D proxying via VirtIO-GPU. Mutes standard XML graphics. |
+| `paravirtGraphics.backend` | `"venus"` / `"virgl"` | `"venus"` | Proxy Vulkan (`venus`) or OpenGL (`virgl`) directly to the host OS. |
+
 #### Input Options (`cfg.kvm.guests.<name>.input`)
 
 | Option | Type | Default | Notes |
@@ -322,6 +330,15 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 | `cloudInit.sshAuthorizedKeys` | [str] | `[]` | SSH public keys for the user. |
 | `cloudInit.packages` | [str] | `[]` | Packages to install on first boot. |
 | `cloudInit.runcmd` | [str] | `[]` | Commands to run on first boot. |
+
+#### Anti-Detection Options (`cfg.kvm.guests.<name>.antiDetection`)
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `antiDetection.enable` | bool | `false` | Enable Tier 1 & 1.5 XML scrubbing. Mutes paravirt devices, spoofs HyperV vendor, standardizes storage buses. |
+| `antiDetection.patchQemu` | bool | `false` | *DO NOT USE HERE*. Fails the build and directs to `cfg.kvm.host.antiDetection.patchQemu`. |
+
+*Note: You must provide a `cfg.kvm.host.hwidSeed` so the module can synthesize a cryptographically permanent UUID, Serial, and MAC Address.*
 | `cloudInit.extraConfig` | lines | `""` | Extra cloud-config YAML appended to user-data. |
 | `cloudInit.networkConfig` | lines? | `null` | Override netplan v2 network-config. See [Cloud-init](#cloud-init). |
 
@@ -354,6 +371,8 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 | `tools.gui` | bool | `false` | Install `virt-manager`, `virt-viewer`. |
 | `tools.extraPackages` | [package] | `[]` | Additional packages. |
 | `xrdp.enable` | bool | `true` | RDP for remote VM control. |
+| `hwidSeed` | str? | `null` | **Mandatory if any guest is enabled.** 36-char UUID seed for generating deterministic SMBIOS/MACs. |
+| `antiDetection.patchQemu` | bool | `false` | Recompiles a pinned QEMU binary to remove "QEMU Keyboard", "BOCHS", etc. |
 
 #### IOMMU Options (`cfg.kvm.host.kernel.iommu`)
 
@@ -482,6 +501,36 @@ For GPU passthrough workflows, enable the bundled `gpu-passthrough` hook
 (`host.libvirtd.hooks.bundled`), which unbinds PCI hostdevs from the host
 driver before VM start and rebinds them on stop. The bundled
 `libvirt-nosleep` hook inhibits host sleep while any VM is running.
+
+---
+
+## Paravirtualized Graphics (Venus & Virgl)
+
+Virtual machines traditionally struggle with 3D hardware acceleration unless you dedicate an entire physical GPU to them via PCIe Passthrough (VFIO).
+
+This module natively integrates **VirtIO-GPU API Proxying**, allowing your VMs to leverage the host's physical GPU without exposing its exact PCI identifiers to the guest. 
+
+By setting `paravirtGraphics.enable = true` and selecting a backend (like `venus` for Vulkan or `virgl` for OpenGL), the guest translates 3D API calls and sends them across the VM boundary using direct shared memory buffers (`blob=on`). The host's native graphics drivers (Mesa) execute the commands and display them seamlessly.
+
+*Note: The module handles host-side privilege elevation automatically. If QEMU runs as the unprivileged `qemu-libvirtd` user, the module automatically maps that user to the `render` group to guarantee direct rendering node access (`/dev/dri/renderD128`).*
+
+---
+
+## Anti-VM Detection (Stealth & Cloaking)
+
+For use cases requiring robust malware sandbox evasion or anti-cheat compliance, this module integrates a mathematical, heavily opinionated cloaking engine.
+
+### Tier 1 & 1.5: XML Scrubbing and PCI Cloaking
+Setting `guests.<name>.antiDetection.enable = true` instantly scrubs the generated libvirt XML of standard paravirtualized identifiers:
+* **Processor Masquerading:** Forces `host-passthrough`, strips the `hypervisor` CPU flag, and spoofs the Hyper-V vendor ID to `GenuineIntel`.
+* **Topology Cloaking:** Forces block storage devices to standard `sata` buses and network interfaces to Intel `e1000e` NICs. Removes memory ballooning devices, VirtIO RNG, and the QEMU Guest Agent entirely.
+* **Procedural Hardware IDs:** Using the host's global `hwidSeed` and the guest's `domainName`, the module mathematically guarantees a globally unique, RFC-4122 compliant UUID v4, a 14-character uppercase Serial Number, and a pseudorandomly assigned consumer Motherboard Profile (e.g., ASUS, MSI, Gigabyte).
+
+### Tier 2: QEMU Binary Patching
+Setting `cfg.kvm.host.antiDetection.patchQemu = true` elevates stealth to the QEMU binary itself.
+NixOS will natively pull the QEMU source code, pin the version, and apply extensive source-level patches to purge over 75 hardcoded strings from the ACPI tables and USB device descriptors (e.g. changing "QEMU Keyboard" to "ASUS Keyboard" and "BOCHS" to "INTEL"). 
+
+*(Note: Tier 3 Kernel RDTSC patching is not currently automated by this module due to rapid kernel shifts).*
 
 ---
 
