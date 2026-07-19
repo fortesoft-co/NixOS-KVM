@@ -373,6 +373,8 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 | `xrdp.enable` | bool | `true` | RDP for remote VM control. |
 | `hwidSeed` | str? | `null` | **Mandatory if any guest is enabled.** 36-char UUID seed for generating deterministic SMBIOS/MACs. |
 | `antiDetection.patchQemu` | bool | `false` | Recompiles a pinned QEMU binary to remove "QEMU Keyboard", "BOCHS", etc. |
+| `antiDetection.patchKernel` | bool | `false` | Compiles a pinned Linux Kernel with KVM RDTSC timing patches applied. |
+| `antiDetection.custom...` | - | `null` | Extensive escape hatches to provide custom QEMU/Kernel source URLs and patches. |
 
 #### IOMMU Options (`cfg.kvm.host.kernel.iommu`)
 
@@ -530,7 +532,11 @@ Setting `guests.<name>.antiDetection.enable = true` instantly scrubs the generat
 Setting `cfg.kvm.host.antiDetection.patchQemu = true` elevates stealth to the QEMU binary itself.
 NixOS will natively pull the QEMU source code, pin the version, and apply extensive source-level patches to purge over 75 hardcoded strings from the ACPI tables and USB device descriptors (e.g. changing "QEMU Keyboard" to "ASUS Keyboard" and "BOCHS" to "INTEL"). 
 
-*(Note: Tier 3 Kernel RDTSC patching is not currently automated by this module due to rapid kernel shifts).*
+### Tier 3: Kernel RDTSC Patching
+Setting `cfg.kvm.host.antiDetection.patchKernel = true` applies a KVM RDTSC timing patch to the Linux Kernel to defeat hyper-aggressive anti-cheats (like Vanguard) that use timing attacks to detect VM-Exits.
+* **Batteries-Included:** By default, this forces your host to compile and use the pinned `Linux 6.1 LTS` kernel and applies our vendored KVM patch.
+* **Escape Hatch:** You can override this entirely for newer kernels by providing your own `.patch` file via `customKernelPatch` and custom source URLs.
+*(Note: Compiling the Linux kernel from source can take 30-90+ minutes depending on your CPU).*
 
 ---
 

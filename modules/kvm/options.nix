@@ -1306,19 +1306,70 @@ in
             type = types.bool;
             default = false;
             description = ''
-              Compiles a custom, pinned version of QEMU from source with anti-detection patches applied.
+              Compiles a custom version of QEMU from source with anti-detection patches applied.
               This mathematically guarantees that hardcoded signatures (like "QEMU Keyboard", "BOCHS", and "QEMU DVD-ROM") 
               are purged from the ACPI tables and device descriptors.
-              
-              This currently pins QEMU to version 10.2.2 to ensure the patch applies flawlessly.
               
               WARNING: Enabling this requires your system to compile QEMU from source, which takes 10-30 minutes.
             '';
           };
+          customQemuSrcUrl = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Optional custom QEMU source URL to override the default pinned version.";
+          };
+          customQemuSrcSha256 = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "SHA256 hash for the custom QEMU source URL.";
+          };
+          customQemuVersion = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Version string for the custom QEMU source.";
+          };
+          customQemuPatch = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = "Path to a custom QEMU patch file to override the vendored default.";
+          };
+
+          patchKernel = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Applies a KVM RDTSC (Time-Stamp Counter) spoofing patch to the host Linux kernel.
+              This defeats hyper-aggressive anti-cheats (like Vanguard) that use timing attacks to detect VM-Exits.
+              
+              This currently pins your kernel to Linux 6.1 LTS to ensure the default patch applies.
+              
+              WARNING: This forces your host to compile the entire Linux kernel from source (takes 30-90+ minutes).
+            '';
+          };
+          customKernelPatch = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = "Optional path to a custom KVM RDTSC patch file to override the vendored default.";
+          };
+          customKernelSrcUrl = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Optional custom Linux Kernel source URL to override the host's default kernel.";
+          };
+          customKernelSrcSha256 = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "SHA256 hash for the custom Linux Kernel source URL.";
+          };
+          customKernelVersion = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Version string for the custom Linux Kernel source.";
+          };
         };
       };
       default = { };
-      description = "Host-level Anti-VM Detection configurations.";
+      description = "Host-level Anti-VM Detection configurations and escape hatches.";
     };
 
     tools = mkOption {

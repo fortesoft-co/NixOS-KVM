@@ -234,17 +234,59 @@ in
 
     # ───────── QEMU Anti-Detection Patching ─────────
     # Pins and patches QEMU to strip hardcoded virtualization signatures from the binary.
+    # Allows power users to provide their own tarball and patch file.
     (mkIf cfg.host.antiDetection.patchQemu {
       virtualisation.libvirtd.qemu.package = pkgs.qemu.overrideAttrs (old: rec {
-        version = "10.2.2";
-        src = pkgs.fetchurl {
-          url = "https://download.qemu.org/qemu-${version}.tar.xz";
-          sha256 = "0xp1457v1hw5szf7gx942xvvk6pasarbqfijfam1f54wy9pjjjvq";
-        };
+        version = if cfg.host.antiDetection.customQemuVersion != null then cfg.host.antiDetection.customQemuVersion else "10.2.2";
+        src = if cfg.host.antiDetection.customQemuSrcUrl != null then
+          pkgs.fetchurl {
+            url = cfg.host.antiDetection.customQemuSrcUrl;
+            sha256 = cfg.host.antiDetection.customQemuSrcSha256;
+          }
+        else
+          pkgs.fetchurl {
+            url = "https://download.qemu.org/qemu-${version}.tar.xz";
+            sha256 = "0xp1457v1hw5szf7gx942xvvk6pasarbqfijfam1f54wy9pjjjvq";
+          };
         patches = (old.patches or []) ++ [
-          ./patches/qemu-${version}-anti-detection.patch
+          (if cfg.host.antiDetection.customQemuPatch != null then
+            cfg.host.antiDetection.customQemuPatch
+          else
+            ./patches/qemu-10.2.2-anti-detection.patch
+          )
         ];
       });
+    })
+
+    # ───────── Kernel Anti-Detection Patching (RDTSC) ─────────
+    # Intercepts RDTSC timing checks in the host KVM module.
+    (mkIf cfg.host.antiDetection.patchKernel {
+      # By default, we pin the kernel to Linux 6.1 LTS to ensure our vendored RDTSC patch applies cleanly.
+      # If the user provides a custom kernel source URL, we override the host's kernel entirely with their source.
+      boot.kernelPackages = if cfg.host.antiDetection.customKernelSrcUrl != null then
+        pkgs.linuxPackagesFor (pkgs.linux.override {
+          argsOverride = {
+            src = pkgs.fetchurl {
+              url = cfg.host.antiDetection.customKernelSrcUrl;
+              sha256 = cfg.host.antiDetection.customKernelSrcSha256;
+            };
+            version = cfg.host.antiDetection.customKernelVersion;
+            modDirVersion = cfg.host.antiDetection.customKernelVersion;
+          };
+        })
+      else
+        pkgs.linuxPackages_6_1;
+
+      # Apply the provided RDTSC patch, or fallback to the vendored 6.1 patch
+      boot.kernelPatches = [
+        {
+          name = "kvm-rdtsc-spoof";
+          patch = if cfg.host.antiDetection.customKernelPatch != null then
+            cfg.host.antiDetection.customKernelPatch
+          else
+            ./patches/linux-6.1-rdtsc.patch;
+        }
+      ];
     })
 
     # ───────── Persistent storage: bind mount + storage pool ─────────

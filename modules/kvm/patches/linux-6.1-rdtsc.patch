@@ -1,0 +1,25 @@
+--- a/arch/x86/kvm/vmx/vmx.c
++++ b/arch/x86/kvm/vmx/vmx.c
+@@ -5882,6 +5882,21 @@
+ 	return 1;
+ }
+ 
++/* KVM RDTSC Spoofing */
++static int handle_rdtsc(struct kvm_vcpu *vcpu)
++{
++	u32 eax, edx;
++	u64 tsc = kvm_read_l1_tsc(vcpu, rdtsc());
++	
++	/* Spoof the TSC offset to hide VM-Exits */
++	u64 fake_tsc = tsc / 16; 
++
++	eax = (u32)fake_tsc;
++	edx = (u32)(fake_tsc >> 32);
++	kvm_rax_write(vcpu, eax);
++	kvm_rdx_write(vcpu, edx);
++	return kvm_skip_emulated_instruction(vcpu);
++}
++
+ static int handle_rdpmc(struct kvm_vcpu *vcpu)
+ {
+ 	int err;
