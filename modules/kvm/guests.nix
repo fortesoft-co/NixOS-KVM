@@ -967,6 +967,19 @@ in
                     assertion = cfg.host.hwidSeed != null && builtins.match "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" cfg.host.hwidSeed != null;
                     message = "Guest ${name} requires cfg.kvm.host.hwidSeed to be set to a valid 36-character UUID. Please open a terminal, run `uuidgen`, and paste the output into your host configuration. This guarantees your VM's Hardware IDs and MAC addresses survive host reinstalls.";
                   }
+                  # Anti-Detection — Guide-rail for QEMU patching
+                  {
+                    assertion = !g.antiDetection.patchQemu;
+                    message = ''
+                      Guest ${name}: 'antiDetection.patchQemu' cannot be set on a per-guest basis. 
+                      Because Libvirt relies on a single heavily-wrapped QEMU binary for all virtual machines, 
+                      patching QEMU is a global, host-wide operation. 
+                      
+                      To apply the anti-detection QEMU patches, please remove this option from your guest 
+                      config and set `cfg.kvm.host.antiDetection.patchQemu = true` in your host configuration instead.
+                      (Note: This will trigger a source compilation of QEMU on your host and will apply to all VMs).
+                    '';
+                  }
                   # RNG rate limiting — both bytes and period must be set together
                   {
                     assertion = (g.rng.rateBytes != null) == (g.rng.ratePeriod != null);

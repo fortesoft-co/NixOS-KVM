@@ -26,7 +26,17 @@ let
               enable = mkOption {
                 type = types.bool;
                 default = false;
-                description = "Enable Zero-Trace Hypervisor Cloaking (Anti-VM Detection).";
+                description = "Enable Zero-Trace Hypervisor Cloaking (Anti-VM Detection) for this guest's XML configuration.";
+              };
+              patchQemu = mkOption {
+                type = types.bool;
+                default = false;
+                description = ''
+                  DO NOT USE. This is a placeholder for discoverability.
+                  Because Libvirt shares a single emulator binary across all VMs, QEMU patching 
+                  must be enabled at the HOST level, not the guest level.
+                  To patch QEMU, set `cfg.kvm.host.antiDetection.patchQemu = true`.
+                '';
               };
             };
           };
