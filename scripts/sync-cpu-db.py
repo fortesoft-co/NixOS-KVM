@@ -19,6 +19,7 @@ for traceability.
 
 import re
 import sys
+import os
 import urllib.request
 import datetime
 
@@ -293,7 +294,14 @@ def main() -> int:
     print(f"# AMD entries:   {len(amd)}", file=sys.stderr)
 
     nix = emit_nix(intel, amd, commit, date)
-    sys.stdout.write(nix)
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    out_path = os.path.normpath(os.path.join(script_dir, "../modules/kvm/host/cpu-packages.nix"))
+    
+    print(f"# Writing output to {out_path}", file=sys.stderr)
+    with open(out_path, "w") as f:
+        f.write(nix)
+    
     return 0
 
 
