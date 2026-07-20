@@ -99,7 +99,22 @@ in
 
     # ───────── QEMU Anti-Detection Patching ─────────
     (mkIf cfg.host.antiDetection.patchQemu {
-      virtualisation.libvirtd.qemu.package = pkgs.qemu.overrideAttrs (old: rec {
+      virtualisation.libvirtd.qemu.package = pkgs.qemu.overrideAttrs (old: 
+        let
+          hostLib = import ./lib.nix { inherit config lib pkgs; };
+          manufacturer = hostLib.selectManufacturer cfg.host.hwidSeed;
+          
+          # Dynamically rewrite the ASUS patch strings to match the selected manufacturer
+          dynamicPatch = pkgs.runCommand "qemu-anti-detection-dynamic.patch" {} ''
+            sed \
+              -e 's/ASUS Real Machine/${manufacturer.realMachine}/g' \
+              -e 's/M4A88TD-M/${manufacturer.defaultProduct}/g' \
+              -e 's/ASUS-PC/${manufacturer.patchToken}-PC/g' \
+              -e 's/ASUS/${manufacturer.patchToken}/g' \
+              ${../patches/qemu-10.2.2-anti-detection.patch} > $out
+          '';
+        in
+        rec {
         version = if cfg.host.antiDetection.customQemuVersion != null then cfg.host.antiDetection.customQemuVersion else "10.2.2";
         src = if cfg.host.antiDetection.customQemuSrcUrl != null then
           pkgs.fetchurl {
@@ -115,7 +130,7 @@ in
           (if cfg.host.antiDetection.customQemuPatch != null then
             cfg.host.antiDetection.customQemuPatch
           else
-            ../patches/qemu-10.2.2-anti-detection.patch
+            dynamicPatch
           )
         ];
       });
