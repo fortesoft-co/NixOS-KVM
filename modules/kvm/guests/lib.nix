@@ -4,6 +4,7 @@ let
   cfg = config.cfg.kvm;
   hostLib = import ../host/lib.nix { inherit config lib pkgs; };
   cpuVendor = hostLib.cpuVendor;
+  cpuSocket = hostLib.cpuSocket;
 
   # ───────── Helpers ─────────
 
@@ -106,15 +107,37 @@ let
   # the existing `inherit hexToInt` in the module's return value working.
   hexToInt = hostLib.hexToInt;
 
-  # A dictionary of authentic, consumer-grade motherboard profiles to randomize between.
-  smbiosProfiles = [
-    { manufacturer = "ASUSTeK COMPUTER INC."; product = "ROG STRIX B550-F GAMING"; version = "Rev X.0x"; family = "ROG System"; }
-    { manufacturer = "Micro-Star International Co., Ltd."; product = "MAG B650 TOMAHAWK WIFI"; version = "1.0"; family = "MSI MB"; }
-    { manufacturer = "Gigabyte Technology Co., Ltd."; product = "B650 AORUS ELITE AX"; version = "x.x"; family = "AORUS MB"; }
-    { manufacturer = "ASRock"; product = "X670E Taichi"; version = "Any"; family = "ASRock MB"; }
-    { manufacturer = "ASUSTeK COMPUTER INC."; product = "TUF GAMING X570-PLUS (WI-FI)"; version = "Rev X.0x"; family = "TUF System"; }
-    { manufacturer = "Micro-Star International Co., Ltd."; product = "PRO Z790-A WIFI"; version = "1.0"; family = "MSI MB"; }
-  ];
+  # ───────── Motherboard Profile Selection ─────────
+  # Imports the O(1) nested dictionary of real motherboard hardware profiles.
+  # We filter this library down to only the boards that physically match our
+  # host's CPU vendor, host's CPU socket, and the procedurally selected manufacturer.
+  allProfiles = import ../host/smbios-profiles.nix;
+
+  hostManufacturer = hostLib.selectManufacturer cfg.host.hwidSeed;
+
+  fallbackProfile = {
+    manufacturerId = hostManufacturer.id;
+    manufacturer = hostManufacturer.smbiosManufacturer;
+    product = hostManufacturer.defaultProduct;
+    version = "1.0";
+    family = "Default System";
+    socket = if cpuSocket != null then cpuSocket else "Unknown";
+    chipset = "Unknown";
+    cpuVendor = cpuVendor;
+    biosVersion = "1.0.0";
+  };
+
+  validProfiles = 
+    let 
+      sock = if cpuSocket != null then cpuSocket else "unknown";
+      m = allProfiles.${hostManufacturer.id} or {};
+      v = m.${cpuVendor} or {};
+      s = v.${sock} or [];
+    in s;
+
+  # If we successfully parsed matching profiles from the database, use them.
+  # Otherwise, fall back to the safe defaults from the manufacturer struct.
+  smbiosProfiles = if length validProfiles > 0 then validProfiles else [ fallbackProfile ];
 
   # ───────── XML generation ─────────
 
