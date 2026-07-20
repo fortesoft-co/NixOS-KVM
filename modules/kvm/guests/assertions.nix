@@ -1,7 +1,8 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 with lib;
 let
   cfg = config.cfg.kvm;
+  hostLib = import ../host/lib.nix { inherit config lib pkgs; };
 in
 {
   config = mkIf (cfg.guests != { }) {
@@ -43,6 +44,24 @@ in
             '';
           }
         ]
+        ++
+          # CPU socket detection — fail closed when auto-detection misses
+          (optional anyAntiDetection [
+            {
+              assertion = cfg.host.cpuSocket != "auto" || hostLib.cpuSocket != null;
+              message = ''
+                Could not auto-detect CPU socket for vendor '${if cfg.host.cpuVendor != "auto" then cfg.host.cpuVendor else hostLib.cpuVendor}'.
+                Both the CPU-X database lookup (layer 2) and the regex heuristic (layer 3) failed.
+
+                To fix this, set cfg.kvm.host.cpuSocket manually in your host configuration.
+                Common values: AM4, AM5, LGA1700, LGA1851, sTR5, SP3, SP5, etc.
+
+                To identify your CPU, run:
+                  nix-shell -p libcpuid --run "cpuid_tool --codename"
+                or check your motherboard manual for the socket type.
+              '';
+            }
+          ])
         ++
           # Per-guest assertions
           flatten (

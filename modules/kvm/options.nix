@@ -1069,14 +1069,16 @@ in
         SMBIOS profile matches the host CPU's socket — an EPYC on an AM4 board
         is an impossible hardware combination that fingerprinting tools flag.
 
-        "auto" parses /proc/cpuinfo model name heuristically. Covers AMD
-        (AM4, AM5, sTRX4, WRX80, sTR5, SP3, SP5, SP6) and Intel
-        (LGA1151, LGA1200, LGA1700, LGA1851, LGA3647, LGA4677) for common
-        consumer and workstation CPUs. Falls back to the latest consumer
-        socket for the detected vendor if the model is unrecognized.
+        "auto" uses a multi-layer detection pipeline:
+          1. libcpuid codename → CPU-X databases.h lookup (sandbox-safe)
+          2. /proc/cpuinfo brand string → regex heuristic
+        If both layers fail, the BUILD FAILS with a helpful message —
+        no vendor fallback guessing (a wrong socket is worse than no socket).
 
-        Set explicitly if your CPU model isn't recognized by the heuristic
-        (e.g., engineering samples, embedded CPUs, or unreleased models).
+        Set explicitly if your CPU isn't recognized (engineering samples,
+        brand-new CPUs, niche/edge-case models). Common values:
+        AM4, AM5, sTR4, sTRX4, sTR5, sWRX8, SP3, SP5, SP6,
+        LGA1151, LGA1200, LGA1700, LGA1851, LGA3647, LGA4677, LGA4710.
       '';
     };
 

@@ -78,7 +78,7 @@ let
       if firstDigit == "9" then "SP5"          # Genoa/Bergamo/Turin (9004/9005)
       else if firstDigit == "8" then "SP6"      # Siena (8004)
       else if firstDigit == "7" then "SP3"      # Naples/Rome/Milan (7001-7003)
-      else "SP5"                                 # fallback for unrecognized EPYC
+      else null                                # unrecognized EPYC — fail, don't guess
     else if hasInfix "Threadripper" modelName then
       if firstDigit == "7" || firstDigit == "8" || firstDigit == "9" then "sTR5"  # 7000+
       else if isPro then "WRX80"                  # PRO 3xxx/5xxx (WRX80; non-PRO is sTRX4)
@@ -87,7 +87,7 @@ let
       if firstDigit == "7" || firstDigit == "8" || firstDigit == "9" then "AM5"  # Zen 4+
       else "AM4"                                  # Zen 1/+/2/3 (1xxx-5xxx)
     else
-      "AM5";                                     # generic AMD fallback (latest consumer)
+      null;                                       # unrecognized AMD — fail, don't guess
 
   detectIntelSocket = modelName:
     let
@@ -115,21 +115,22 @@ let
       else if xeonGen == "4" || xeonGen == "5" then "LGA4677"   # 4th/5th gen Scalable
       else if xeonGen == "6" then "LGA4710"             # 6th gen (Granite Rapids)
       else if xeonGen == "1" || xeonGen == "2" || xeonGen == "3" then "LGA3647"  # 1st-3rd gen
-      else "LGA4677"                               # fallback for unrecognized Xeon
+      else null                                   # unrecognized Xeon — fail, don't guess
     else if hasInfix "Core" modelName then
       if coreGenInt >= 12 && coreGenInt <= 14 then "LGA1700"   # 12th-14th gen
       else if coreGenInt == 10 || coreGenInt == 11 then "LGA1200"  # 10th-11th gen
       else if coreGenInt >= 6 && coreGenInt <= 9 then "LGA1151"  # 6th-9th gen
-      else "LGA1700"                               # fallback
+      else null                                   # unrecognized Core — fail, don't guess
     else
-      "LGA1851";                                   # generic Intel fallback (latest consumer)
+      null;                                       # unrecognized Intel — fail, don't guess
 
   # Pure dispatcher — takes a resolved vendor and a model name string.
   # Exported so it can be unit-tested without touching /proc/cpuinfo.
+  # Returns null if the socket cannot be determined (no fallback guessing).
   detectSocket = vendor: modelName:
     if vendor == "amd" then detectAmdSocket modelName
     else if vendor == "intel" then detectIntelSocket modelName
-    else "unknown";
+    else null;
 
   # ───────── CPU socket detection: layer 2 (libcpuid + CPU-X databases.h) ───
   # Uses libcpuid's `cpuid_tool` to identify the CPU codename from the CPUID
@@ -200,7 +201,13 @@ let
   # Layer 1: user override (cfg.host.cpuSocket)
   # Layer 2: libcpuid codename → CPU-X databases.h lookup (sandbox-safe, ~98%)
   # Layer 3: /proc/cpuinfo brand → regex heuristic (~85%)
-  # Layer 4: vendor-specific fallback (AM5 / LGA1851)
+  # Layer 4: FAIL — build fails with a helpful message if all layers miss.
+  #
+  # Design principle: fail closed, not open. A wrong socket guess is worse than
+  # no socket — it creates impossible hardware combinations (e.g., EPYC + AM4
+  # motherboard) that fingerprinting tools detect. When detection fails, the
+  # build fails and tells the user to set cfg.host.cpuSocket manually.
+  #
   # Lazily evaluated — the IFDs only trigger when a caller actually reads this.
   cpuSocket =
     let
