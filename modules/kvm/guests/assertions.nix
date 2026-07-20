@@ -171,6 +171,23 @@ in
                       board profiles not in our database).
                     '';
                   }
+                  # Anti-Detection — synthetic mode forbids manual MAC overrides
+                  {
+                    assertion = !(
+                      g.antiDetection.enable &&
+                      g.antiDetection.smbiosMode == "synthetic" &&
+                      lib.any (net: net.mac != null) g.networks
+                    );
+                    message = ''
+                      Guest ${name}: smbiosMode is "synthetic" but one or more network
+                      interfaces have a manually set MAC address. In synthetic mode,
+                      the MAC is procedurally derived from your hwidSeed/hwidSalt using
+                      the selected manufacturer's real OUI prefix — manual overrides
+                      are not permitted. Either:
+                        1. Remove the networks.*.mac overrides, or
+                        2. Set antiDetection.smbiosMode = "manual".
+                    '';
+                  }
                   # HWID Seed — universally enforce presence and UUID format
                   {
                     assertion = cfg.host.hwidSeed != null && builtins.match "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" cfg.host.hwidSeed != null;

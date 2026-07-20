@@ -81,25 +81,34 @@ let
     in
     result.disks;
 
-  # Deterministic MAC for a network interface — derived from the domain
-  # name and interface index so it survives rebuilds. Uses the QEMU/KVM
-  # locally-administered prefix 52:54:00. Pinning the MAC (rather than
-  # letting libvirt auto-generate a random one) makes `virsh define`
-  # produce byte-identical stored XML every time, which the path-unit
+  # Deterministically generates a MAC address for a guest's network interface.
+  # Uses the real OUI prefix of the host's selected motherboard manufacturer
+  # (not the QEMU 52:54:00 prefix, which is a trivially detectable VM signature).
+  # The last 3 bytes are derived from a per-interface hash so the MAC is:
+  #   - deterministic (survives rebuilds)
+  #   - unique per guest/interface
+  #   - consistent with the SMBIOS manufacturer (NIC and board from same vendor)
+  # Pinning the MAC (rather than letting libvirt auto-generate) makes `virsh
+  # define` produce byte-identical stored XML every time, which the path-unit
   # revert relies on to distinguish our own writes from external edits.
-  # Shared by generateXML (domain XML) and mkGuestService (cloud-init
-  # network-config) so both reference the exact MAC the NIC receives.
   macFor =
     name: net: i:
     let
       guest = cfg.guests.${name};
       seedPrefix = cfg.host.hwidSeed;
       h = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-mac-${toString i}";
+      # Use the real manufacturer OUI when anti-detection is active so the NIC
+      # matches the SMBIOS manufacturer. Fall back to the standard QEMU prefix
+      # when anti-detection is off (normal VM behavior).
+      prefix = if guest.antiDetection.enable then
+        lib.toLower (hostLib.selectManufacturer seedPrefix).oui
+      else
+        "52:54:00";
     in
     if net.mac != null then
       net.mac
     else
-      "52:54:00:${substring 0 2 h}:${substring 2 2 h}:${substring 4 2 h}";
+      "${prefix}:${substring 0 2 h}:${substring 2 2 h}:${substring 4 2 h}";
 
   # Hex helper — shared implementation lives in host/lib.nix so host-level
   # selection (manufacturer index) and guest-level derivation (UUID variant,

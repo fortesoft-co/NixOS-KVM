@@ -239,35 +239,45 @@ let
   #   - realMachine: replaces "QEMU Virtual Machine" / "KVM Virtual Machine"
   #     in QEMU source (step 7)
   manufacturers = [
-    {
-      id = "asus";
-      smbiosManufacturer = "ASUSTeK COMPUTER INC.";
-      patchToken = "ASUS";
-      defaultProduct = "M4A88TD-M";
-      realMachine = "ASUS Real Machine";
-    }
-    {
-      id = "msi";
-      smbiosManufacturer = "Micro-Star International Co., Ltd.";
-      patchToken = "MSIC";
-      defaultProduct = "MS-7C37";
-      realMachine = "MSI Real Machine";
-    }
-    {
-      id = "gigabyte";
-      smbiosManufacturer = "Gigabyte Technology Co., Ltd.";
-      patchToken = "GBTC";
-      defaultProduct = "X570 AORUS ELITE";
-      realMachine = "Gigabyte Real Machine";
-    }
-    {
-      id = "asrock";
-      smbiosManufacturer = "ASRock";
-      patchToken = "ASRK";
-      defaultProduct = "X570 Taichi";
-      realMachine = "ASRock Real Machine";
-    }
-  ];
+      {
+        id = "asus";
+        smbiosManufacturer = "ASUSTeK COMPUTER INC.";
+        patchToken = "ASUS";
+        defaultProduct = "M4A88TD-M";
+        realMachine = "ASUS Real Machine";
+        # Real OUI registered to ASUSTek Computer Inc. (IEEE OUI registry)
+        # Used as the first 3 bytes of generated MAC addresses so the NIC
+        # appears to be made by the same manufacturer as the motherboard.
+        oui = "04:D9:F5";
+      }
+      {
+        id = "msi";
+        smbiosManufacturer = "Micro-Star International Co., Ltd.";
+        patchToken = "MSIC";
+        defaultProduct = "MS-7C37";
+        realMachine = "MSI Real Machine";
+        # Real OUI registered to Micro-Star International Co., Ltd.
+        oui = "00:01:6C";
+      }
+      {
+        id = "gigabyte";
+        smbiosManufacturer = "Gigabyte Technology Co., Ltd.";
+        patchToken = "GBTC";
+        defaultProduct = "X570 AORUS ELITE";
+        realMachine = "Gigabyte Real Machine";
+        # Real OUI registered to Gigabyte Technology Co., Ltd.
+        oui = "00:13:20";
+      }
+      {
+        id = "asrock";
+        smbiosManufacturer = "ASRock";
+        patchToken = "ASRK";
+        defaultProduct = "X570 Taichi";
+        realMachine = "ASRock Real Machine";
+        # Real OUI registered to ASRock Inc.
+        oui = "00:13:74";
+      }
+    ];
 
   # Deterministically select one manufacturer for the entire host.
   #

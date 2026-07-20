@@ -538,6 +538,21 @@ Setting `cfg.kvm.host.antiDetection.patchKernel = true` applies a KVM RDTSC timi
 * **Escape Hatch:** You can override this entirely for newer kernels by providing your own `.patch` file via `customKernelPatch` and custom source URLs.
 *(Note: Compiling the Linux kernel from source can take 30-90+ minutes depending on your CPU).*
 
+> **Enable anti-detection before the guest's first boot.**
+>
+> Toggling `antiDetection.enable` changes the guest's hardware identity —
+> SMBIOS strings, BIOS version, and MAC address prefix (from QEMU's
+> `52:54:00` to the selected manufacturer's real OUI). This is equivalent to
+> physically swapping the motherboard and NIC.
+>
+> Enabling after first boot can break:
+> - **Guest networking** — DHCP leases and netplan/NetworkManager configs
+>   reference the old MAC address; the interface won't be configured.
+> - **Windows activation** — the digital license is tied to the SMBIOS
+>   product name and serial.
+> - **TPM-sealed secrets** — BitLocker, Windows Hello PINs, and DRM keys
+>   are sealed against the hardware profile and will require recovery keys.
+
 ---
 
 ## Access tiers

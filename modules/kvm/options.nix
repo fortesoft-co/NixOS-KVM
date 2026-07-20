@@ -730,10 +730,17 @@ let
                   default = null;
                   description = ''
                     MAC address. When null, a deterministic MAC is derived
-                    from the guest name and interface index (52:54:00 prefix,
-                    the QEMU/KVM locally-administered range). Pinning the MAC
-                    keeps it stable across rebuilds so DHCP leases, firewall
-                    rules, and libvirt's stored domain XML stay reproducible.
+                    from the guest's hwidSalt and interface index.
+
+                    When antiDetection.enable is true, the MAC uses the real
+                    OUI prefix of the host's selected motherboard manufacturer
+                    (so the NIC appears to be made by the same vendor as the
+                    motherboard). When antiDetection is off, the standard QEMU
+                    `52:54:00` prefix is used.
+
+                    Pinning the MAC keeps it stable across rebuilds so DHCP
+                    leases, firewall rules, and libvirt's stored domain XML
+                    stay reproducible.
                   '';
                 };
               };
