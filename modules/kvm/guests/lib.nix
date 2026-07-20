@@ -406,6 +406,7 @@ let
           serial = if guest.smbios.serial != null then guest.smbios.serial else syntheticSerial;
           uuid = domainUuid;
           sku = guest.smbios.sku;
+          biosVersion = selectedProfile.biosVersion;
         }
       else
         guest.smbios // { uuid = null; }; # domain <uuid> tag handles SMBIOS UUID when antiDetection is off
@@ -425,11 +426,21 @@ let
         (optionalString (effectiveSmbios.family != null) "<entry name='family'>${effectiveSmbios.family}</entry>")
         (optionalString (effectiveSmbios.sku != null) "<entry name='sku'>${effectiveSmbios.sku}</entry>")
       ];
+      biosEntries = filter (s: s != "") [
+        (optionalString (effectiveSmbios.manufacturer != null) "<entry name='vendor'>${effectiveSmbios.manufacturer}</entry>")
+        (optionalString (effectiveSmbios.biosVersion != null) "<entry name='version'>${effectiveSmbios.biosVersion}</entry>")
+      ];
       smbiosXML = optionalString (smbiosEntries != [ ]) ''
         <sysinfo type='smbios'>
+          <bios>
+            ${concatStrings biosEntries}
+          </bios>
           <system>
             ${concatStrings smbiosEntries}
           </system>
+          <baseBoard>
+            ${concatStrings smbiosEntries}
+          </baseBoard>
         </sysinfo>'';
 
       # Serial console
