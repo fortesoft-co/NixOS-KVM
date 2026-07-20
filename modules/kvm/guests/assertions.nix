@@ -11,7 +11,7 @@ in
           allPciIds = concatLists (
             mapAttrsToList (_: g: map (d: d.id) g.passthrough.pci) (filterAttrs (_: g: g.enable) cfg.guests)
           );
-          
+
           # Duplicate domainNames across guests
           allDomainNames = mapAttrsToList (_: g: g.domainName) (filterAttrs (_: g: g.enable) cfg.guests);
 
@@ -97,14 +97,14 @@ in
                     assertion = !(g.clock.adjustment != null && g.clock.offset != "variable");
                     message = "Guest ${name}: clock.adjustment requires clock.offset = \"variable\".";
                   }
-                  # Anti-Detection — enforce valid user overrides
+                  # Anti-Detection — enforce valid user overrides (all-or-nothing for all 6 SMBIOS fields)
                   {
                     assertion = !(
-                      g.antiDetection.enable && 
-                      (g.smbios.manufacturer != null || g.smbios.product != null || g.smbios.version != null || g.smbios.family != null) &&
-                      !(g.smbios.manufacturer != null && g.smbios.product != null && g.smbios.version != null && g.smbios.family != null)
+                      g.antiDetection.enable &&
+                      (g.smbios.manufacturer != null || g.smbios.product != null || g.smbios.version != null || g.smbios.family != null || g.smbios.serial != null || g.smbios.sku != null) &&
+                      !(g.smbios.manufacturer != null && g.smbios.product != null && g.smbios.version != null && g.smbios.family != null && g.smbios.serial != null && g.smbios.sku != null)
                     );
-                    message = "Guest ${name}: antiDetection is enabled. If you override any of the base SMBIOS fields (manufacturer, product, version, or family), you must provide ALL of them to avoid a mismatched hardware profile.";
+                    message = "Guest ${name}: antiDetection is enabled. If you override any SMBIOS field (manufacturer, product, version, family, serial, or sku), you must provide ALL of them to avoid a mismatched hardware profile.";
                   }
                   # HWID Seed — universally enforce presence and UUID format
                   {
@@ -115,11 +115,11 @@ in
                   {
                     assertion = !g.antiDetection.patchQemu;
                     message = ''
-                      Guest ${name}: 'antiDetection.patchQemu' cannot be set on a per-guest basis. 
-                      Because Libvirt relies on a single heavily-wrapped QEMU binary for all virtual machines, 
-                      patching QEMU is a global, host-wide operation. 
-                      
-                      To apply the anti-detection QEMU patches, please remove this option from your guest 
+                      Guest ${name}: 'antiDetection.patchQemu' cannot be set on a per-guest basis.
+                      Because Libvirt relies on a single heavily-wrapped QEMU binary for all virtual machines,
+                      patching QEMU is a global, host-wide operation.
+
+                      To apply the anti-detection QEMU patches, please remove this option from your guest
                       config and set `cfg.kvm.host.antiDetection.patchQemu = true` in your host configuration instead.
                       (Note: This will trigger a source compilation of QEMU on your host and will apply to all VMs).
                     '';
