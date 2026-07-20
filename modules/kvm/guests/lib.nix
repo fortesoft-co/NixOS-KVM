@@ -377,7 +377,7 @@ let
           sku = guest.smbios.sku;
         }
       else
-        guest.smbios;
+        guest.smbios // { uuid = null; }; # domain <uuid> tag handles SMBIOS UUID when antiDetection is off
 
       smbiosEntries = filter (s: s != "") [
         (optionalString (

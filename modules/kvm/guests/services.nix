@@ -4,7 +4,7 @@ let
   cfg = config.cfg.kvm;
   enabledGuests = filterAttrs (_: g: g.enable) cfg.guests;
   guestLib = import ./lib.nix { inherit config lib pkgs; };
-  inherit (guestLib) storageDir resolveDiskPath generateXML;
+  inherit (guestLib) storageDir resolveDiskPath generateXML macFor;
 
   # ───────── Systemd service generation ─────────
 
