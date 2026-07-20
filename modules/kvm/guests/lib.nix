@@ -409,7 +409,7 @@ let
           biosVersion = selectedProfile.biosVersion;
         }
       else
-        guest.smbios // { uuid = null; }; # domain <uuid> tag handles SMBIOS UUID when antiDetection is off
+        guest.smbios // { uuid = null; biosVersion = null; }; # domain <uuid> tag handles SMBIOS UUID when antiDetection is off
 
       smbiosEntries = filter (s: s != "") [
         (optionalString (
