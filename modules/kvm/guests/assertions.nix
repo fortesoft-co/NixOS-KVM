@@ -116,14 +116,60 @@ in
                     assertion = !(g.clock.adjustment != null && g.clock.offset != "variable");
                     message = "Guest ${name}: clock.adjustment requires clock.offset = \"variable\".";
                   }
-                  # Anti-Detection — enforce valid user overrides (all-or-nothing for all 6 SMBIOS fields)
+                  # Anti-Detection — serial override is ALWAYS forbidden when antiDetection is on
+                  {
+                    assertion = !(g.antiDetection.enable && g.smbios.serial != null);
+                    message = ''
+                      Guest ${name}: smbios.serial cannot be set manually when antiDetection is enabled.
+                      The serial is always deterministically generated from your hwidSeed/hwidSalt to
+                      ensure it is unique, plausible, and impossible to correlate with other identifiers.
+                      Remove the smbios.serial override to proceed.
+                    '';
+                  }
+                  # Anti-Detection — synthetic mode forbids ALL smbios overrides
                   {
                     assertion = !(
                       g.antiDetection.enable &&
-                      (g.smbios.manufacturer != null || g.smbios.product != null || g.smbios.version != null || g.smbios.family != null || g.smbios.serial != null || g.smbios.sku != null) &&
-                      !(g.smbios.manufacturer != null && g.smbios.product != null && g.smbios.version != null && g.smbios.family != null && g.smbios.serial != null && g.smbios.sku != null)
+                      g.antiDetection.smbiosMode == "synthetic" &&
+                      (g.smbios.manufacturer != null || g.smbios.product != null || g.smbios.version != null || g.smbios.family != null || g.smbios.sku != null)
                     );
-                    message = "Guest ${name}: antiDetection is enabled. If you override any SMBIOS field (manufacturer, product, version, family, serial, or sku), you must provide ALL of them to avoid a mismatched hardware profile.";
+                    message = ''
+                      Guest ${name}: smbiosMode is "synthetic" but manual SMBIOS overrides are set.
+                      In synthetic mode, the motherboard profile is procedurally selected from a
+                      curated database — manual overrides are not permitted. Either:
+                        1. Remove the smbios.* overrides, or
+                        2. Set antiDetection.smbiosMode = "manual" and provide full smbios hardware fields.
+                    '';
+                  }
+                  # Anti-Detection — manual mode requires ALL smbios hardware fields
+                  {
+                    assertion = !(
+                      g.antiDetection.enable &&
+                      g.antiDetection.smbiosMode == "manual" &&
+                      (g.smbios.manufacturer == null ||
+                       g.smbios.product == null ||
+                       g.smbios.version == null ||
+                       g.smbios.family == null ||
+                       g.smbios.biosVersion == null)
+                    );
+                    message = ''
+                      Guest ${name}: smbiosMode is "manual" but not all smbios hardware fields are provided.
+
+                      Hint: Run `scripts/dump-host-smbios.sh` on your physical host to extract
+                      your real values, or provide custom values of your choosing.
+
+                      WARNING: Whatever values you provide must be internally consistent. The
+                      manufacturer, product, version, family, and BIOS version must correspond
+                      to a real, physically-possible motherboard. If you mix fields from
+                      different boards (e.g., an ASUS product with a Gigabyte manufacturer),
+                      or pair a board with a CPU that doesn't fit its socket, fingerprinting
+                      tools will flag the impossible combination. The system cannot validate
+                      these values for you — you are responsible for their accuracy.
+
+                      Synthetic mode is strongly recommended unless you
+                      have a specific reason to go manual (e.g., licensing tie-ins, custom
+                      board profiles not in our database).
+                    '';
                   }
                   # HWID Seed — universally enforce presence and UUID format
                   {

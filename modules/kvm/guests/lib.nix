@@ -392,22 +392,38 @@ let
 
       # SMBIOS
       effectiveSmbios = if guest.antiDetection.enable then
-        let
-          # Procedurally select a Motherboard Profile from the dictionary
-          profileSlice = substring 0 7 profileHash;
-          profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
-          selectedProfile = elemAt smbiosProfiles profileIndex;
-        in
-        {
-          manufacturer = if guest.smbios.manufacturer != null then guest.smbios.manufacturer else selectedProfile.manufacturer;
-          product = if guest.smbios.product != null then guest.smbios.product else selectedProfile.product;
-          version = if guest.smbios.version != null then guest.smbios.version else selectedProfile.version;
-          family = if guest.smbios.family != null then guest.smbios.family else selectedProfile.family;
-          serial = if guest.smbios.serial != null then guest.smbios.serial else syntheticSerial;
-          uuid = domainUuid;
-          sku = guest.smbios.sku;
-          biosVersion = selectedProfile.biosVersion;
-        }
+        if guest.antiDetection.smbiosMode == "manual" then
+          # MANUAL MODE: Use the user-provided hardware strings from smbios.*.
+          # Serial and UUID are always synthetic (never leaked from the physical host).
+          {
+            manufacturer = guest.smbios.manufacturer;
+            product = guest.smbios.product;
+            version = guest.smbios.version;
+            family = guest.smbios.family;
+            serial = syntheticSerial;
+            uuid = domainUuid;
+            sku = guest.smbios.sku;
+            biosVersion = guest.smbios.biosVersion;
+          }
+        else
+          # SYNTHETIC MODE (default): Procedurally select a motherboard profile
+          # from the curated database. User smbios overrides are ignored
+          # (enforced by assertions — they can't even be set in this mode).
+          let
+            profileSlice = substring 0 7 profileHash;
+            profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
+            selectedProfile = elemAt smbiosProfiles profileIndex;
+          in
+          {
+            manufacturer = selectedProfile.manufacturer;
+            product = selectedProfile.product;
+            version = selectedProfile.version;
+            family = selectedProfile.family;
+            serial = syntheticSerial;
+            uuid = domainUuid;
+            sku = guest.smbios.sku;
+            biosVersion = selectedProfile.biosVersion;
+          }
       else
         guest.smbios // { uuid = null; biosVersion = null; }; # domain <uuid> tag handles SMBIOS UUID when antiDetection is off
 

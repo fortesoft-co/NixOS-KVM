@@ -35,14 +35,14 @@ let
           description = ''
             A permanent, per-guest cryptographic salt used to generate deterministic
             Hardware IDs (SMBIOS UUID, Serial Number, MAC addresses, and Motherboard Profile).
-            
+
             This MUST be set and should NEVER be changed after creation. Changing it
             will regenerate all hardware identifiers, triggering Windows reactivation
             and potential "HWID Spoofing" bans in strict anti-cheats.
-            
+
             Must be 3-64 characters, alphanumeric/hyphens/underscores only.
             Generate one using `uuidgen` or `openssl rand -hex 16`.
-            
+
             RESOLUTION: If you want to rename the VM (change `domainName`), set `hwidSalt`
             to its current value first, then change `domainName`. The UUID and hardware
             identity will remain stable across the rename.
@@ -58,12 +58,51 @@ let
                 default = false;
                 description = "Enable Zero-Trace Hypervisor Cloaking (Anti-VM Detection) for this guest's XML configuration.";
               };
+              smbiosMode = mkOption {
+                type = types.enum [ "synthetic" "manual" ];
+                default = "synthetic";
+                description = ''
+                  How to generate SMBIOS motherboard identifiers for the guest.
+
+                  - `synthetic` (default): Procedurally selects a real motherboard profile
+                    from the curated database, matched to your host's CPU socket and a
+                    pseudo-randomly chosen manufacturer. This is the recommended mode —
+                    it produces plausible, internally-consistent hardware identities
+                    that are impossible to correlate across installations.
+
+                    Synthetic mode is strongly recommended unless you
+                    have a specific reason to go manual (e.g., licensing tie-ins, custom
+                    board profiles not in our database).
+
+                  - `manual`: You provide all SMBIOS hardware fields yourself via the
+                    existing `smbios.*` options (manufacturer, product, version, family,
+                    biosVersion). Since Nix cannot read `/sys` or run `dmidecode` at
+                    build time, these must be supplied manually.
+
+                    WARNING: Whatever values you provide must be internally
+                    consistent — the manufacturer, product, version, family, and BIOS
+                    version must correspond to a real, physically-possible motherboard.
+                    Mixing fields from different boards (e.g., an ASUS product with a
+                    Gigabyte manufacturer) or pairing a board with a CPU that doesn't
+                    fit its socket will produce an impossible hardware combination that
+                    fingerprinting tools can detect. The system cannot validate these
+                    values for you — you are responsible for their accuracy.
+
+                    Hint: You can use your actual host hardware values (run
+                    `scripts/dump-host-smbios.sh` to extract them) or any custom values
+                    you choose.
+
+                    WARNING: Using your real hardware identity is especially risky.
+                    Anti-cheat vendors can fingerprint and correlate your specific
+                    motherboard across multiple VMs.
+                '';
+              };
               patchQemu = mkOption {
                 type = types.bool;
                 default = false;
                 description = ''
                   DO NOT USE. This is a placeholder for discoverability.
-                  Because Libvirt shares a single emulator binary across all VMs, QEMU patching 
+                  Because Libvirt shares a single emulator binary across all VMs, QEMU patching
                   must be enabled at the HOST level, not the guest level.
                   To patch QEMU, set `cfg.kvm.host.antiDetection.patchQemu = true`.
                 '';
@@ -89,7 +128,7 @@ let
                 ];
                 default = "venus";
                 description = ''
-                  The VirtIO-GPU backend to use. 
+                  The VirtIO-GPU backend to use.
                   - 'venus': Proxies Vulkan (best for Windows gaming/Proton via DXVK).
                   - 'virgl': Proxies OpenGL (legacy compatibility).
                 '';
@@ -264,34 +303,80 @@ let
               manufacturer = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "SMBIOS manufacturer string.";
-                example = "MyCorp";
+                description = ''
+                  SMBIOS manufacturer string (Type 2 Baseboard).
+
+                  When antiDetection.smbiosMode = "manual", set this to your desired
+                  manufacturer (run `scripts/dump-host-smbios.sh` to extract your host's
+                  real values, or provide custom values).
+
+                  When antiDetection.smbiosMode = "synthetic" (default), this field
+                  is ignored — the profile is procedurally selected from the database.
+                '';
+                example = "ASUSTeK COMPUTER INC.";
               };
               product = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "SMBIOS product name.";
-                example = "Virtual Workstation";
+                description = ''
+                  SMBIOS product name (Type 2 Baseboard).
+
+                  When antiDetection.smbiosMode = "manual", set this to your desired
+                  product name. Ignored in synthetic mode.
+                '';
+                example = "ROG MAXIMUS Z790 HERO";
               };
               version = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "SMBIOS product version.";
+                description = ''
+                  SMBIOS product version (Type 2 Baseboard).
+
+                  When antiDetection.smbiosMode = "manual", set this to your desired
+                  version string. Ignored in synthetic mode.
+                '';
               };
               serial = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "SMBIOS system serial number.";
+                description = ''
+                  SMBIOS system serial number.
+
+                  WARNING: When antiDetection.enable = true, this field is ALWAYS
+                  ignored. The serial is deterministically generated from your
+                  hwidSeed/hwidSalt to ensure uniqueness and prevent correlation
+                  attacks. Setting it will trigger a build-time assertion error.
+                '';
               };
               family = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "SMBIOS family string.";
+                description = ''
+                  SMBIOS family string (Type 2 Baseboard).
+
+                  When antiDetection.smbiosMode = "manual", set this to your desired
+                  family string. Ignored in synthetic mode.
+                '';
               };
               sku = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "SMBIOS SKU number.";
+                description = ''
+                  SMBIOS SKU number.
+
+                  Optional in both modes. In synthetic mode this is the only
+                  smbios field that can be overridden (it has no profiling risk).
+                '';
+              };
+              biosVersion = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS BIOS version string (Type 0 BIOS).
+
+                  When antiDetection.smbiosMode = "manual", set this to your desired
+                  BIOS version. Ignored in synthetic mode.
+                '';
               };
             };
           };
@@ -299,6 +384,12 @@ let
           description = ''
             SMBIOS fields exposed to the guest. Maps to
             <sysinfo type='smbios'>.
+
+            In synthetic mode (default), these are ignored except `sku`.
+            In manual mode, manufacturer/product/version/family/biosVersion are
+            required (run `scripts/dump-host-smbios.sh` to extract your host values,
+            or provide custom values).
+            serial is always synthetic when antiDetection is enabled.
           '';
         };
 
@@ -1028,20 +1119,20 @@ in
       type = types.nullOr types.str;
       default = null;
       description = ''
-        A mandatory, secret string used as a cryptographic seed for generating deterministic 
+        A mandatory, secret string used as a cryptographic seed for generating deterministic
         Hardware IDs (SMBIOS UUIDs, Serials, Motherboard Profiles, and MAC addresses).
         Generate one using `uuidgen` and paste it here.
-        
-        This option ensures that your virtual machines maintain the exact same hardware 
+
+        This option ensures that your virtual machines maintain the exact same hardware
         fingerprint even if you reinstall NixOS or change your host's hostname.
-        
-        WARNING: Changing this seed, or changing a guest's `domainName`, will mathematically 
-        regenerate all its hardware identifiers. This will trigger Windows reactivation 
-        and can trigger "HWID Spoofing" bans in strict anti-cheats (like Vanguard/EAC). 
+
+        WARNING: Changing this seed, or changing a guest's `domainName`, will mathematically
+        regenerate all its hardware identifiers. This will trigger Windows reactivation
+        and can trigger "HWID Spoofing" bans in strict anti-cheats (like Vanguard/EAC).
         Generate this once and never change it.
-        
-        RESOLUTION: If you MUST rename a VM but want to keep its HWID to prevent bans, 
-        run `virsh dumpxml <old-name>` before renaming, copy the UUID, Serial, and 
+
+        RESOLUTION: If you MUST rename a VM but want to keep its HWID to prevent bans,
+        run `virsh dumpxml <old-name>` before renaming, copy the UUID, Serial, and
         Manufacturer strings, and hardcode them into the guest's `smbios` options.
       '';
     };
@@ -1350,9 +1441,9 @@ in
             default = false;
             description = ''
               Compiles a custom version of QEMU from source with anti-detection patches applied.
-              This mathematically guarantees that hardcoded signatures (like "QEMU Keyboard", "BOCHS", and "QEMU DVD-ROM") 
+              This mathematically guarantees that hardcoded signatures (like "QEMU Keyboard", "BOCHS", and "QEMU DVD-ROM")
               are purged from the ACPI tables and device descriptors.
-              
+
               WARNING: Enabling this requires your system to compile QEMU from source, which takes 10-30 minutes.
             '';
           };
@@ -1383,9 +1474,9 @@ in
             description = ''
               Applies a KVM RDTSC (Time-Stamp Counter) spoofing patch to the host Linux kernel.
               This defeats hyper-aggressive anti-cheats (like Vanguard) that use timing attacks to detect VM-Exits.
-              
+
               This currently pins your kernel to Linux 6.1 LTS to ensure the default patch applies.
-              
+
               WARNING: This forces your host to compile the entire Linux kernel from source (takes 30-90+ minutes).
             '';
           };
