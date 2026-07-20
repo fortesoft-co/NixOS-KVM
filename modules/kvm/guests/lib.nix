@@ -524,5 +524,5 @@ let
 
 in
 {
-  inherit cpuVendor storageDir resolveDiskPath pciBdfToXml diskDev assignBootOrders macFor hexToInt smbiosProfiles generateXML;
+  inherit storageDir resolveDiskPath pciBdfToXml diskDev assignBootOrders macFor hexToInt smbiosProfiles generateXML;
 }

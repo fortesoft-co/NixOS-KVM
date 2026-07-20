@@ -7,8 +7,8 @@
 with lib;
 let
   cfg = config.cfg.kvm;
-  guestLib = import ./lib.nix { inherit config lib pkgs; };
-  cpuVendor = guestLib.cpuVendor;
+  hostLib = import ./lib.nix { inherit config lib pkgs; };
+  cpuVendor = hostLib.cpuVendor;
 
   anyGuestPciPassthrough = lib.any (g: (g.passthrough.pci or [ ]) != [ ]) (
     builtins.attrValues cfg.guests
