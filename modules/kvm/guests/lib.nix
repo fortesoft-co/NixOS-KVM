@@ -100,17 +100,11 @@ let
     else
       "52:54:00:${substring 0 2 h}:${substring 2 2 h}:${substring 4 2 h}";
 
-  # Converts a hexadecimal string slice (up to ~14 chars max) to a Base-10 Integer.
-  hexToInt = hex:
-    let
-      hexMap = {
-        "0" = 0; "1" = 1; "2" = 2; "3" = 3; "4" = 4; "5" = 5; "6" = 6; "7" = 7;
-        "8" = 8; "9" = 9; "a" = 10; "b" = 11; "c" = 12; "d" = 13; "e" = 14; "f" = 15;
-      };
-      chars = stringToCharacters (toLower hex);
-      folder = acc: char: (acc * 16) + hexMap.${char};
-    in
-    foldl' folder 0 chars;
+  # Hex helper — shared implementation lives in host/lib.nix so host-level
+  # selection (manufacturer index) and guest-level derivation (UUID variant,
+  # serial bytes, profile index) use the same code. Re-exported here to keep
+  # the existing `inherit hexToInt` in the module's return value working.
+  hexToInt = hostLib.hexToInt;
 
   # A dictionary of authentic, consumer-grade motherboard profiles to randomize between.
   smbiosProfiles = [

@@ -1060,6 +1060,26 @@ in
       '';
     };
 
+    cpuSocket = mkOption {
+      type = types.str;
+      default = "auto";
+      description = ''
+        CPU socket family used to filter the motherboard profile library
+        (step 5 of the anti-detection implementation). Ensures the selected
+        SMBIOS profile matches the host CPU's socket — an EPYC on an AM4 board
+        is an impossible hardware combination that fingerprinting tools flag.
+
+        "auto" parses /proc/cpuinfo model name heuristically. Covers AMD
+        (AM4, AM5, sTRX4, WRX80, sTR5, SP3, SP5, SP6) and Intel
+        (LGA1151, LGA1200, LGA1700, LGA1851, LGA3647, LGA4677) for common
+        consumer and workstation CPUs. Falls back to the latest consumer
+        socket for the detected vendor if the model is unrecognized.
+
+        Set explicitly if your CPU model isn't recognized by the heuristic
+        (e.g., engineering samples, embedded CPUs, or unreleased models).
+      '';
+    };
+
     kernel = mkOption {
       type = types.submodule {
         options = {
