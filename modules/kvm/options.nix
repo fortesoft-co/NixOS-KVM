@@ -19,6 +19,36 @@ let
           description = "Whether to enable this guest.";
         };
 
+        # ───── Identity ─────
+        domainName = mkOption {
+          type = types.str;
+          description = ''
+            The libvirt domain name (the <name> tag). This is the human-readable name
+            shown by `virsh list`. It can be changed without breaking VM persistence
+            so long as `hwidSalt` remains the same.
+            Must be 3-32 characters, alphanumeric/hyphens/underscores only.
+          '';
+        };
+
+        hwidSalt = mkOption {
+          type = types.str;
+          description = ''
+            A permanent, per-guest cryptographic salt used to generate deterministic
+            Hardware IDs (SMBIOS UUID, Serial Number, MAC addresses, and Motherboard Profile).
+            
+            This MUST be set and should NEVER be changed after creation. Changing it
+            will regenerate all hardware identifiers, triggering Windows reactivation
+            and potential "HWID Spoofing" bans in strict anti-cheats.
+            
+            Must be 3-64 characters, alphanumeric/hyphens/underscores only.
+            Generate one using `uuidgen` or `openssl rand -hex 16`.
+            
+            RESOLUTION: If you want to rename the VM (change `domainName`), set `hwidSalt`
+            to its current value first, then change `domainName`. The UUID and hardware
+            identity will remain stable across the rename.
+          '';
+        };
+
         # ───── Specialized Configurations ─────
         antiDetection = mkOption {
           type = types.submodule {
@@ -70,15 +100,6 @@ let
           description = "Paravirtualized graphics API proxying (VirtIO-GPU) configuration.";
         };
 
-        domainName = mkOption {
-          type = types.str;
-          description = ''
-            The permanent, internal name of the VM used by Libvirt. This MUST be set and should NEVER be changed 
-            after creation. Changing this will create a brand new VM and orphan your old disks, as well as change 
-            its cryptographic Hardware ID.
-            Must be 3-32 characters long and contain only letters, numbers, hyphens, and underscores.
-          '';
-        };
 
         # ───── Compute ─────
         memory = mkOption {

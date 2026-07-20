@@ -14,11 +14,18 @@ in
           
           # Duplicate domainNames across guests
           allDomainNames = mapAttrsToList (_: g: g.domainName) (filterAttrs (_: g: g.enable) cfg.guests);
+
+          # Duplicate hwidSalts across guests
+          allHwidSalts = mapAttrsToList (_: g: g.hwidSalt) (filterAttrs (_: g: g.enable) cfg.guests);
         in
         [
           {
             assertion = unique allDomainNames == allDomainNames;
             message = "Domain name conflict: multiple guests share the same domainName. Each guest MUST have a globally unique domainName.";
+          }
+          {
+            assertion = unique allHwidSalts == allHwidSalts;
+            message = "hwidSalt conflict: multiple guests share the same hwidSalt. Each guest MUST have a globally unique hwidSalt to prevent hardware ID collisions.";
           }
           {
             assertion = unique allPciIds == allPciIds;
@@ -40,6 +47,10 @@ in
                   {
                     assertion = builtins.match "^[a-zA-Z0-9_-]{3,32}$" g.domainName != null;
                     message = "Guest ${name}: domainName '${g.domainName}' is invalid. It must be 3-32 characters long and contain only alphanumeric characters, hyphens, and underscores.";
+                  }
+                  {
+                    assertion = builtins.match "^[a-zA-Z0-9_-]{3,64}$" g.hwidSalt != null;
+                    message = "Guest ${name}: hwidSalt is invalid. It must be 3-64 characters long and contain only alphanumeric characters, hyphens, and underscores. Generate one using `uuidgen` or `openssl rand -hex 16`.";
                   }
                   {
                     assertion = !(g.secureBoot && g.firmware != "uefi");

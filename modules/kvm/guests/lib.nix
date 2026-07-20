@@ -91,7 +91,7 @@ let
     let
       guest = cfg.guests.${name};
       seedPrefix = cfg.host.hwidSeed;
-      h = builtins.hashString "sha256" "${seedPrefix}-${guest.domainName}-${toString i}";
+      h = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-mac-${toString i}";
     in
     if net.mac != null then
       net.mac
@@ -128,19 +128,33 @@ let
       sdir = storageDir name guest;
       
       seedPrefix = cfg.host.hwidSeed;
-      baseHash = builtins.hashString "sha256" "${seedPrefix}-${guest.domainName}";
 
-      # Deterministic UUID from domain name — stable across rebuilds so
-      # virsh define updates the existing domain instead of creating a new one.
+      # Separate hashes per identifier — prevents correlation attacks.
+      # A researcher who knows the method cannot verify UUID ↔ Serial ↔ MAC
+      # are from the same source, because each uses an independent hash.
+      uuidHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-uuid";
+      serialHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-serial";
+      profileHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-profile";
+
+      # Deterministic UUID — RFC 4122 v4 compliant.
+      # Version nibble forced to 4 (standard).
+      # Variant nibble derived from hash (distributes across 8/9/a/b like real hardware).
       domainUuid =
         let
-          p1 = substring 0 8 baseHash;
-          p2 = substring 8 4 baseHash;
-          p3 = "4${substring 13 3 baseHash}"; # Force UUID v4 format
-          p4 = "8${substring 17 3 baseHash}"; # Force RFC 4122 variant
-          p5 = substring 20 12 baseHash;
+          p1 = substring 0 8 uuidHash;
+          p2 = substring 8 4 uuidHash;
+          p3 = "4${substring 13 3 uuidHash}"; # Force version 4
+          variantNibble = let v = hexToInt (substring 16 1 uuidHash); in substring (lib.mod v 4) 1 "89ab";
+          p4 = "${variantNibble}${substring 17 3 uuidHash}"; # Derive variant
+          p5 = substring 20 12 uuidHash;
         in
         "${p1}-${p2}-${p3}-${p4}-${p5}";
+
+      # Generates a full-alphanumeric serial (A-Z, 0-9) like real motherboards,
+      # not hex-only (A-F, 0-9) which is a detectable pattern.
+      alnumChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      byteAt = i: hexToInt (substring (i * 2) 2 serialHash);
+      syntheticSerial = concatStrings (genList (i: substring (lib.mod (byteAt i) 36) 1 alnumChars) 14);
 
       # OS / firmware
       osXML =
@@ -360,11 +374,9 @@ let
       # SMBIOS
       effectiveSmbios = if guest.antiDetection.enable then
         let
-          syntheticSerial = toUpper (substring 32 14 baseHash);
-          
           # Procedurally select a Motherboard Profile from the dictionary
-          slice = substring 46 7 baseHash;
-          profileIndex = lib.mod (hexToInt slice) (length smbiosProfiles);
+          profileSlice = substring 0 7 profileHash;
+          profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
           selectedProfile = elemAt smbiosProfiles profileIndex;
         in
         {
