@@ -17,8 +17,16 @@ in
 
           # Duplicate hwidSalts across guests
           allHwidSalts = mapAttrsToList (_: g: g.hwidSalt) (filterAttrs (_: g: g.enable) cfg.guests);
+
+          # Whether any anti-detection feature is active
+          anyAntiDetection = cfg.host.antiDetection.patchQemu || cfg.host.antiDetection.patchKernel
+            || lib.any (g: g.antiDetection.enable) (builtins.attrValues cfg.guests);
         in
         [
+          {
+            assertion = !(anyAntiDetection && cfg.host.cpuVendor != "auto");
+            message = "cfg.kvm.host.cpuVendor must be \"auto\" when anti-detection is enabled. Manual vendor override risks a CPUID/SMBIOS mismatch that fingerprinting tools can detect.";
+          }
           {
             assertion = unique allDomainNames == allDomainNames;
             message = "Domain name conflict: multiple guests share the same domainName. Each guest MUST have a globally unique domainName.";

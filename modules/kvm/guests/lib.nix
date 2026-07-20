@@ -2,6 +2,8 @@
 with lib;
 let
   cfg = config.cfg.kvm;
+  hostLib = import ../host/lib.nix { inherit config lib pkgs; };
+  cpuVendor = hostLib.cpuVendor;
 
   # ───────── Helpers ─────────
 
@@ -185,7 +187,7 @@ let
           ${optionalString (guest.cpu.hidden || guest.antiDetection.enable) "<kvm><hidden state='on'/></kvm>"}
           ${optionalString guest.antiDetection.enable ''
             <hyperv>
-              <vendor_id state='on' value='GenuineIntel'/>
+              <vendor_id state='on' value='${if cpuVendor == "amd" then "AuthenticAMD" else "GenuineIntel"}'/>
             </hyperv>
           ''}
         </features>'';
@@ -522,5 +524,5 @@ let
 
 in
 {
-  inherit storageDir resolveDiskPath pciBdfToXml diskDev assignBootOrders macFor hexToInt smbiosProfiles generateXML;
+  inherit cpuVendor storageDir resolveDiskPath pciBdfToXml diskDev assignBootOrders macFor hexToInt smbiosProfiles generateXML;
 }

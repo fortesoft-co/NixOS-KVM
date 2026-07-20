@@ -7,25 +7,8 @@
 with lib;
 let
   cfg = config.cfg.kvm;
-
-  # ───────── CPU vendor detection ─────────
-  cpuVendor =
-    let
-      v = cfg.host.cpuVendor;
-    in
-    if v != "auto" then
-      v
-    else if builtins.elem "kvm-intel" config.boot.kernelModules then
-      "intel"
-    else if builtins.elem "kvm-amd" config.boot.kernelModules then
-      "amd"
-    else
-      builtins.readFile (
-        pkgs.runCommand "cpu-vendor.txt" { } ''
-          ((cat /proc/cpuinfo | grep vendor | head -n 1 | grep -i intel > /dev/null 2>&1) \
-            && echo -n 'intel' || echo -n 'amd') > $out
-        ''
-      );
+  guestLib = import ./lib.nix { inherit config lib pkgs; };
+  cpuVendor = guestLib.cpuVendor;
 
   anyGuestPciPassthrough = lib.any (g: (g.passthrough.pci or [ ]) != [ ]) (
     builtins.attrValues cfg.guests
