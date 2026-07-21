@@ -136,8 +136,8 @@ let
     biosVersion = "1.0.0";
   };
 
-  validProfiles = 
-    let 
+  validProfiles =
+    let
       sock = if cpuSocket != null then cpuSocket else "unknown";
       m = allProfiles.${hostManufacturer.id} or {};
       v = m.${cpuVendor} or {};
@@ -154,7 +154,7 @@ let
     name: guest:
     let
       sdir = storageDir name guest;
-      
+
       seedPrefix = cfg.host.hwidSeed;
 
       # Separate hashes per identifier — prevents correlation attacks.
@@ -162,6 +162,10 @@ let
       # are from the same source, because each uses an independent hash.
       uuidHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-uuid";
       serialHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-serial";
+      # Distinct hash for the Type 2 (baseboard) serial. Real hardware never
+      # shares a serial between Type 1 and Type 2; we mirror that so a
+      # researcher who knows the derivation can't correlate the two.
+      baseSerialHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-base-serial";
       profileHash = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-profile";
 
       # Deterministic UUID — RFC 4122 v4 compliant.
@@ -181,8 +185,16 @@ let
       # Generates a full-alphanumeric serial (A-Z, 0-9) like real motherboards,
       # not hex-only (A-F, 0-9) which is a detectable pattern.
       alnumChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      byteAt = i: hexToInt (substring (i * 2) 2 serialHash);
-      syntheticSerial = concatStrings (genList (i: substring (lib.mod (byteAt i) 36) 1 alnumChars) 14);
+      # serialFromHash: derive a 14-char alphanumeric serial from any hash.
+      # Used for Type 1 (system) and Type 2 (baseboard) serials from independent
+      # hashes. Type 3 (chassis) serial is NOT synthesized — real desktop boards
+      # almost universally emit a placeholder ("--") there, so we use the
+      # profile's chassisSerial value verbatim (always a placeholder in the DB).
+      serialFromHash = h:
+        let bAt = i: hexToInt (substring (i * 2) 2 h); in
+        concatStrings (genList (i: substring (lib.mod (bAt i) 36) 1 alnumChars) 14);
+      syntheticSerial = serialFromHash serialHash;       # Type 1 (System)
+      baseboardSerial = serialFromHash baseSerialHash;   # Type 2 (Baseboard)
 
       # OS / firmware
       osXML =
@@ -233,7 +245,7 @@ let
       cpuFlagsXML = concatMapStrings (
         f: "<feature policy='${f.policy}' name='${f.name}'/>"
       ) effectiveCpuFlags;
-      
+
       effectiveCpuMode = if guest.antiDetection.enable then "host-passthrough" else guest.cpu.mode;
       cpuXML = ''
         <cpu mode='${effectiveCpuMode}' check='none'>
@@ -244,7 +256,7 @@ let
 
       # Hard disks + CD-ROMs (boot orders auto-assigned)
       effectiveDisks = if guest.antiDetection.enable then
-        map (d: d // { 
+        map (d: d // {
           bus = "sata";
           # Strip VirtIO-specific performance flags that cause SATA validation failures
           iothread = null;
@@ -400,73 +412,184 @@ let
         "<clock ${attrs}/>";
 
       # SMBIOS
-      effectiveSmbios = if guest.antiDetection.enable then
-        if guest.antiDetection.smbiosMode == "manual" then
-          # MANUAL MODE: Use the user-provided hardware strings from smbios.*.
-          # Serial and UUID are always synthetic (never leaked from the physical host).
-          {
-            manufacturer = guest.smbios.manufacturer;
-            product = guest.smbios.product;
-            version = guest.smbios.version;
-            family = guest.smbios.family;
-            serial = syntheticSerial;
-            uuid = domainUuid;
-            sku = guest.smbios.sku;
-            biosVersion = guest.smbios.biosVersion;
-          }
+      #
+      # effectiveSmbios carries distinct values for every SMBIOS type we emit:
+      #   Type 0 (BIOS):     biosVendor / biosVersion / biosDate / biosRelease
+      #   Type 1 (System):   system* fields + synthetic systemSerial + systemUuid
+      #   Type 2 (Baseboard):board* fields + synthetic baseboardSerial
+      #   Type 3 (Chassis):  chassis* fields (serial is the profile placeholder)
+      #   Type 11 (OEM):     oemStrings list
+      # The old code fed the SAME smbiosEntries list into both <system> and
+      # <baseBoard>, making Type 1 == Type 2 byte-for-byte — a fingerprint real
+      # hardware never produces. Synthetic mode now pulls Type 1 and Type 2 from
+      # separate profile fields. (Manual mode still maps the single user-provided
+      # set into both Type 1 and Type 2; giving manual mode separate Type 1
+      # fields is a follow-up that requires new options.)
+      effectiveSmbios =
+        if guest.antiDetection.enable then
+          if guest.antiDetection.smbiosMode == "manual" then
+            # MANUAL MODE: Use the user-provided hardware strings from smbios.*.
+            # Serial and UUID are always synthetic (never leaked from the host).
+            # Type 1 and Type 2 both derive from the single user-provided set
+            # until separate Type 1 options are added. Type 3/11 are not emitted
+            # in manual mode (no fields to source them from yet).
+            let g = guest.smbios; in {
+              biosVendor  = g.manufacturer;
+              biosVersion = g.biosVersion;
+              biosDate = "";  biosRelease = "";
+              systemManufacturer = g.manufacturer;
+              systemProduct = g.product;
+              systemVersion = g.version;
+              systemSerial = syntheticSerial;
+              systemUuid = domainUuid;
+              systemSku = g.sku;
+              systemFamily = g.family;
+              boardManufacturer = g.manufacturer;
+              boardProduct = g.product;
+              boardVersion = g.version;
+              boardSerial = baseboardSerial;
+              boardAsset = "";
+              boardLocation = "";
+              chassisManufacturer = "";
+              chassisVersion = "";
+              chassisSerial = "";
+              chassisAsset = "";
+              chassisSku = "";
+              oemStrings = [ ];
+            }
+          else
+            # SYNTHETIC MODE (default): Procedurally select a motherboard profile
+            # from the curated database. User smbios overrides are ignored
+            # (enforced by assertions — they can't even be set in this mode),
+            # except `sku` which carries no profiling risk.
+            let
+              profileSlice = substring 0 7 profileHash;
+              profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
+              p = elemAt smbiosProfiles profileIndex;
+              # p.<field> may be absent in the legacy fallbackProfile; `or ""`
+              # keeps this branch total.
+              f = name: p.${name} or "";
+            in {
+              # Type 0 (BIOS) — vendor matches the board vendor (attested).
+              biosVendor  = p.manufacturer;
+              biosVersion = p.biosVersion;
+              biosDate    = f "biosDate";
+              biosRelease = f "biosRelease";
+              # Type 1 (System) — placeholders preserved verbatim from the probe.
+              systemManufacturer = f "systemManufacturer";
+              systemProduct      = f "systemProduct";
+              systemVersion      = f "systemVersion";
+              systemSerial       = syntheticSerial;
+              systemUuid         = domainUuid;
+              systemSku          = f "systemSku";
+              systemFamily       = f "systemFamily";
+              # Type 2 (Baseboard) — the real board model + synthetic serial.
+              boardManufacturer = p.manufacturer;
+              boardProduct      = p.product;
+              boardVersion      = p.version;
+              boardSerial       = baseboardSerial;
+              boardAsset        = f "boardAsset";
+              boardLocation     = f "boardLocation";
+              # Type 3 (Chassis) — placeholders verbatim; serial is the profile
+              # placeholder (always "--" in the DB), NOT synthesized.
+              chassisManufacturer = f "chassisManufacturer";
+              chassisVersion      = f "chassisVersion";
+              chassisSerial       = f "chassisSerial";
+              chassisAsset        = f "chassisAsset";
+              chassisSku          = f "chassisSku";
+              # Type 11 (OEM Strings) — atomic per probe, vendor-specific.
+              oemStrings = p.oemStrings or [ ];
+            }
         else
-          # SYNTHETIC MODE (default): Procedurally select a motherboard profile
-          # from the curated database. User smbios overrides are ignored
-          # (enforced by assertions — they can't even be set in this mode).
-          let
-            profileSlice = substring 0 7 profileHash;
-            profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
-            selectedProfile = elemAt smbiosProfiles profileIndex;
-          in
-          {
-            manufacturer = selectedProfile.manufacturer;
-            product = selectedProfile.product;
-            version = selectedProfile.version;
-            family = selectedProfile.family;
-            serial = syntheticSerial;
-            uuid = domainUuid;
-            sku = guest.smbios.sku;
-            biosVersion = selectedProfile.biosVersion;
-          }
-      else
-        guest.smbios // { uuid = null; biosVersion = null; }; # domain <uuid> tag handles SMBIOS UUID when antiDetection is off
+          # antiDetection OFF — flat guest.smbios, no Type 3/11, Type 1 == Type 2
+          # (doesn't matter when not evading detection). biosVersion null so the
+          # <bios> version entry is omitted; the domain <uuid> tag handles the
+          # SMBIOS UUID, so systemUuid is null here.
+          let g = guest.smbios; in {
+            biosVendor  = g.manufacturer;  biosVersion = null;
+            biosDate = "";  biosRelease = "";
+            systemManufacturer = g.manufacturer;
+            systemProduct = g.product;
+            systemVersion = g.version;
+            systemSerial = g.serial;
+            systemUuid = null;
+            systemSku = g.sku;
+            systemFamily = g.family;
+            boardManufacturer = g.manufacturer;
+            boardProduct = g.product;
+            boardVersion = g.version;
+            boardSerial = g.serial;
+            boardAsset = "";
+            boardLocation = "";
+            chassisManufacturer = "";
+            chassisVersion = "";
+            chassisSerial = "";
+            chassisAsset = "";
+            chassisSku = "";
+            oemStrings = [ ];
+          };
 
-      smbiosEntries = filter (s: s != "") [
-        (optionalString (
-          effectiveSmbios.manufacturer != null
-        ) "<entry name='manufacturer'>${effectiveSmbios.manufacturer}</entry>")
-        (optionalString (
-          effectiveSmbios.product != null
-        ) "<entry name='product'>${effectiveSmbios.product}</entry>")
-        (optionalString (
-          effectiveSmbios.version != null
-        ) "<entry name='version'>${effectiveSmbios.version}</entry>")
-        (optionalString (effectiveSmbios.serial != null) "<entry name='serial'>${effectiveSmbios.serial}</entry>")
-        (optionalString (effectiveSmbios.uuid != null) "<entry name='uuid'>${effectiveSmbios.uuid}</entry>")
-        (optionalString (effectiveSmbios.family != null) "<entry name='family'>${effectiveSmbios.family}</entry>")
-        (optionalString (effectiveSmbios.sku != null) "<entry name='sku'>${effectiveSmbios.sku}</entry>")
-      ];
+      # SMBIOS XML construction — Step 3 & 4:
+      # Split the old single smbiosEntries list (which was fed into BOTH
+      # <system> and <baseBoard>, making Type 1 == Type 2) into distinct
+      # per-type entry lists, and add <chassis> (Type 3) and <oemStrings>
+      # (Type 11) blocks.
+      smbiosEntry = name: val:
+        if val == null || val == "" then "" else "<entry name='${name}'>${val}</entry>";
+
       biosEntries = filter (s: s != "") [
-        (optionalString (effectiveSmbios.manufacturer != null) "<entry name='vendor'>${effectiveSmbios.manufacturer}</entry>")
-        (optionalString (effectiveSmbios.biosVersion != null) "<entry name='version'>${effectiveSmbios.biosVersion}</entry>")
+        (smbiosEntry "vendor"  effectiveSmbios.biosVendor)
+        (smbiosEntry "version" effectiveSmbios.biosVersion)
+        (smbiosEntry "date"    effectiveSmbios.biosDate)
+        (smbiosEntry "release" effectiveSmbios.biosRelease)
       ];
-      smbiosXML = optionalString (smbiosEntries != [ ]) ''
-        <sysinfo type='smbios'>
-          <bios>
-            ${concatStrings biosEntries}
-          </bios>
-          <system>
-            ${concatStrings smbiosEntries}
-          </system>
-          <baseBoard>
-            ${concatStrings smbiosEntries}
-          </baseBoard>
-        </sysinfo>'';
+      systemEntries = filter (s: s != "") [
+        (smbiosEntry "manufacturer" effectiveSmbios.systemManufacturer)
+        (smbiosEntry "product"      effectiveSmbios.systemProduct)
+        (smbiosEntry "version"      effectiveSmbios.systemVersion)
+        (smbiosEntry "serial"       effectiveSmbios.systemSerial)
+        (smbiosEntry "uuid"         effectiveSmbios.systemUuid)
+        (smbiosEntry "sku"          effectiveSmbios.systemSku)
+        (smbiosEntry "family"       effectiveSmbios.systemFamily)
+      ];
+      baseBoardEntries = filter (s: s != "") [
+        (smbiosEntry "manufacturer" effectiveSmbios.boardManufacturer)
+        (smbiosEntry "product"      effectiveSmbios.boardProduct)
+        (smbiosEntry "version"      effectiveSmbios.boardVersion)
+        (smbiosEntry "serial"       effectiveSmbios.boardSerial)
+        (smbiosEntry "asset"        effectiveSmbios.boardAsset)
+        (smbiosEntry "location"     effectiveSmbios.boardLocation)
+      ];
+      chassisEntries = filter (s: s != "") [
+        (smbiosEntry "manufacturer" effectiveSmbios.chassisManufacturer)
+        (smbiosEntry "version"      effectiveSmbios.chassisVersion)
+        (smbiosEntry "serial"       effectiveSmbios.chassisSerial)
+        (smbiosEntry "asset"        effectiveSmbios.chassisAsset)
+        (smbiosEntry "sku"          effectiveSmbios.chassisSku)
+      ];
+      # OEM strings carry no name attribute — just <entry>value</entry>.
+      oemStringEntries = map (s: "<entry>${s}</entry>") effectiveSmbios.oemStrings;
+
+      # Emit one <tag>…</tag> block with all entries on a single line, or ""
+      # if the block has no entries (so it can be filtered out below).
+      smbiosBlock = tag: entries:
+        if entries == [ ] then ""
+        else "          <${tag}>\n            ${concatStrings entries}\n          </${tag}>";
+
+      # <system> is the anchor: if it has nothing to emit, skip the whole
+      # <sysinfo> (preserves the old `smbiosEntries != []` gating). <chassis>
+      # and <oemStrings> are only present in synthetic mode; in manual/off
+      # mode their entry lists are empty, so smbiosBlock returns "" and the
+      # filter drops them.
+      smbiosXML = optionalString (systemEntries != [ ]) (concatStringsSep "\n" (filter (s: s != "") [
+        "        <sysinfo type='smbios'>"
+        (smbiosBlock "bios"       biosEntries)
+        (smbiosBlock "system"     systemEntries)
+        (smbiosBlock "baseBoard"  baseBoardEntries)
+        (smbiosBlock "chassis"    chassisEntries)
+        (smbiosBlock "oemStrings" oemStringEntries)
+        "        </sysinfo>"
+      ]));
 
       # Serial console
       serialXML = optionalString guest.serial.enable (
