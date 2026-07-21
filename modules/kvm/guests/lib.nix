@@ -101,7 +101,7 @@ let
       # matches the SMBIOS manufacturer. Fall back to the standard QEMU prefix
       # when anti-detection is off (normal VM behavior).
       prefix = if guest.antiDetection.enable then
-        lib.toLower (hostLib.selectManufacturer seedPrefix).oui
+        lib.toLower hostLib.hostManufacturer.oui
       else
         "52:54:00";
     in
@@ -122,7 +122,7 @@ let
   # host's CPU vendor, host's CPU socket, and the procedurally selected manufacturer.
   allProfiles = import ../host/smbios-profiles.nix;
 
-  hostManufacturer = hostLib.selectManufacturer cfg.host.hwidSeed;
+  hostManufacturer = hostLib.hostManufacturer;
 
   fallbackProfile = {
     manufacturerId = hostManufacturer.id;

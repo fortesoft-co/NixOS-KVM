@@ -102,7 +102,7 @@ in
       virtualisation.libvirtd.qemu.package = pkgs.qemu.overrideAttrs (old: 
         let
           hostLib = import ./lib.nix { inherit config lib pkgs; };
-          manufacturer = hostLib.selectManufacturer cfg.host.hwidSeed;
+          manufacturer = hostLib.hostManufacturer;
           
           # Dynamically rewrite the ASUS patch strings to match the selected manufacturer
           dynamicPatch = pkgs.runCommand "qemu-anti-detection-dynamic.patch" {} ''

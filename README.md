@@ -346,7 +346,8 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `cpuVendor` | `"intel"` / `"amd"` / `"auto"` | `"auto"` | `"auto"` derives from `boot.kernelModules`. |
+| `cpuVendor` | `"intel"` / `"amd"` / `"auto"` | `"auto"` | `"auto"` derives from `boot.kernelModules`. Forced to `"auto"` when any guest has antiDetection on. |
+| `cpuSocket` | str | `"auto"` | CPU socket family for SMBIOS profile filtering (`AM4`, `LGA1700`, …). `"auto"` probes the **build** machine's CPU — see the remote-build warning under [Anti-VM Detection](#anti-vm-detection-stealth--cloaking). |
 | `kernel.extraModules` | [str] | `[]` | Extra `boot.kernelModules`. |
 | `kernel.extraParams` | [str] | `[]` | Extra kernel command-line params. |
 | `kernel.nested` | bool | `true` | Nested virtualization (KVM in KVM). |
@@ -552,6 +553,29 @@ Setting `cfg.kvm.host.antiDetection.patchKernel = true` applies a KVM RDTSC timi
 >   product name and serial.
 > - **TPM-sealed secrets** — BitLocker, Windows Hello PINs, and DRM keys
 >   are sealed against the hardware profile and will require recovery keys.
+
+> **Set `cfg.kvm.host.cpuSocket` explicitly for remote / cloud builds.**
+>
+> When `cpuSocket = "auto"` (the default), the socket is detected by running
+> `cpuid_tool` during the build, which reads the **build** machine's CPU — not
+> the deployment target's. The detected socket determines which motherboard
+> manufacturers are eligible, and therefore the brand baked into the guest's
+> SMBIOS profile, the QEMU binary patch (Tier 2), and the MAC address OUI
+> prefix — all three follow the socket-aware manufacturer selection
+> (constrained to vendors that actually ship a board for the host's socket).
+>
+> If you build on a different machine than you deploy to (cloud builders, CI,
+> remote `--build-host`, cross-arch), `auto` produces a hardware identity
+> matching the **builder** — a CPU-vs-SMBIOS mismatch on the target that
+> fingerprinting tools can detect (e.g. SMBIOS claiming an Intel LGA1700 board
+> while CPUID reports AMD Zen). Nix cannot distinguish a same-architecture
+> remote build from a local one, so this can't be caught by an assertion.
+>
+> `auto` is only safe when you build on the target itself (e.g. `nixos-rebuild
+> switch` run locally). For any remote or cross build, set `cpuSocket` to the
+> target host's actual socket (e.g. `"AM5"`, `"LGA1700"`). This makes the
+> manufacturer selection and all downstream identity a pure function of your
+> config, identical no matter where the build runs.
 
 ---
 

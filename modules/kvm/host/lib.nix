@@ -300,7 +300,61 @@ let
       idx = lib.mod (hexToInt (substring 0 7 h)) (length manufacturers);
     in
     elemAt manufacturers idx;
+
+  # ───────── Socket-aware manufacturer selection ─────────
+  # The curated profile library, imported here so manufacturer selection can be
+  # constrained to vendors that actually ship a board for the host's socket.
+  # (Plain attrset — lazily forced, so importing it is cheap; only the
+  # vendor/socket paths we touch get evaluated.)
+  smbiosProfiles = import ./smbios-profiles.nix;
+
+  # Manufacturers that have at least one profile for (vendor, socket), in
+  # registry order. The seed-based pick is constrained to this set so we never
+  # choose a vendor with no matching profile — which would otherwise fall to
+  # the weak fallbackProfile and emit a thin, socket-mismatched SMBIOS while
+  # the QEMU patch and MAC OUI still used that vendor's strings.
+  manufacturersForSocket = vendor: socket:
+    let
+      sock = if socket != null then socket else "unknown";
+      profilesFor = m:
+        let byVendor = smbiosProfiles.${m.id} or {};
+        in (byVendor.${vendor} or {}).${sock} or [];
+    in
+    filter (m: (profilesFor m) != []) manufacturers;
+
+  # Deterministically select a manufacturer that has profiles for the host's
+  # (vendor, socket). Among the eligible vendors, the same sha256-mod formula
+  # as selectManufacturer picks one — just over the smaller eligible set, so
+  # the choice stays seed-stable and unbiased. If NO vendor has a profile for
+  # the socket (e.g. SP6 / LGA4710, where none of the four ship boards), fall
+  # back to the unconstrained seed-based pick; the guest then uses
+  # fallbackProfile, and the user should pick a supported socket or use manual
+  # mode.
+  selectManufacturerForSocket = seed: vendor: socket:
+    let
+      eligible = manufacturersForSocket vendor socket;
+    in
+    if eligible == [] then
+      selectManufacturer seed
+    else
+      let
+        h = builtins.hashString "sha256" "${seed}-manufacturer";
+        idx = lib.mod (hexToInt (substring 0 7 h)) (length eligible);
+      in
+      elemAt eligible idx;
+
+  # The single host-level manufacturer used by EVERY consumer — the QEMU patch
+  # (host/libvirtd.nix), the MAC OUI prefix (guests/lib.nix macFor), and the
+  # SMBIOS profile selection (guests/lib.nix) — so the brand is consistent
+  # across all three. Socket-aware: constrained to vendors with a profile for
+  # the host's socket.
+  #
+  # NOTE: this forces cpuVendor/cpuSocket. When cpuSocket = "auto" it runs
+  # cpuid_tool during eval, which reads the BUILD machine's CPU — so for
+  # remote/cross builds you should set cfg.kvm.host.cpuSocket explicitly (the
+  # same requirement already applies to guest profile selection).
+  hostManufacturer = selectManufacturerForSocket cfg.host.hwidSeed cpuVendor cpuSocket;
 in
 {
-  inherit hexToInt cpuVendor cpuSocket detectSocket detectSocketFromDatabase manufacturers selectManufacturer;
+  inherit hexToInt cpuVendor cpuSocket detectSocket detectSocketFromDatabase manufacturers selectManufacturer selectManufacturerForSocket manufacturersForSocket hostManufacturer;
 }
