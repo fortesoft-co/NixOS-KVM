@@ -187,15 +187,35 @@ All options live under two subtrees: `cfg.kvm.guests.<name>` (per guest) and
 
 #### SMBIOS Options (`cfg.kvm.guests.<name>.smbios`)
 
+Base options.
+
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `smbios.manufacturer` | str? | `null` | SMBIOS manufacturer string. |
-| `smbios.product` | str? | `null` | SMBIOS product name. |
-| `smbios.version` | str? | `null` | SMBIOS product version. |
-| `smbios.serial` | str? | `null` | SMBIOS system serial number. |
-| `smbios.uuid` | str? | `null` | System UUID. When null, derived from the domain name. |
-| `smbios.family` | str? | `null` | SMBIOS family string. |
-| `smbios.sku` | str? | `null` | SMBIOS SKU number. |
+| `smbios.manufacturer` | str? | `null` | Type 2 (Baseboard) manufacturer. |
+| `smbios.product` | str? | `null` | Type 2 (Baseboard) product name. |
+| `smbios.version` | str? | `null` | Type 2 (Baseboard) version. |
+| `smbios.family` | str? | `null` | Type 2 (Baseboard) family. |
+| `smbios.biosVersion` | str? | `null` | Type 0 (BIOS) version. |
+| `smbios.sku` | str? | `null` | Type 1 (System) SKU. |
+| `smbios.serial` | str? | `null` | Type 1 (System) serial. |
+
+Extended options.
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `smbios.biosDate` | str? | `null` | Type 0 (BIOS) release date (`mm/dd/yyyy`). |
+| `smbios.biosRelease` | str? | `null` | Type 0 (BIOS) revision (`major.minor`). |
+| `smbios.systemManufacturer` | str? | `null` | Type 1 (System) manufacturer. |
+| `smbios.systemProduct` | str? | `null` | Type 1 (System) product. |
+| `smbios.systemVersion` | str? | `null` | Type 1 (System) version. |
+| `smbios.systemFamily` | str? | `null` | Type 1 (System) family. |
+| `smbios.boardAsset` | str? | `null` | Type 2 (Baseboard) asset tag. |
+| `smbios.boardLocation` | str? | `null` | Type 2 (Baseboard) location in chassis. |
+| `smbios.chassisManufacturer` | str? | `null` | Type 3 (Chassis) manufacturer. |
+| `smbios.chassisVersion` | str? | `null` | Type 3 (Chassis) version. |
+| `smbios.chassisAsset` | str? | `null` | Type 3 (Chassis) asset tag. |
+| `smbios.chassisSku` | str? | `null` | Type 3 (Chassis) SKU. |
+| `smbios.oemStrings` | [str] | `[]` | Type 11 (OEM Strings) entries. |
 
 #### Disks Options (`cfg.kvm.guests.<name>.disks`)
 
@@ -538,6 +558,19 @@ Setting `cfg.kvm.host.antiDetection.patchKernel = true` applies a KVM RDTSC timi
 * **Batteries-Included:** By default, this forces your host to compile and use the pinned `Linux 6.1 LTS` kernel and applies our vendored KVM patch.
 * **Escape Hatch:** You can override this entirely for newer kernels by providing your own `.patch` file via `customKernelPatch` and custom source URLs.
 *(Note: Compiling the Linux kernel from source can take 30-90+ minutes depending on your CPU).*
+
+### SMBIOS Modes
+
+`antiDetection.smbiosMode` controls how the guest's SMBIOS table (Type 0 BIOS, Type 1 System, Type 2 Baseboard, Type 3 Chassis, Type 11 OEM Strings) is produced. The full Type 0/1/2/3/11 set is always emitted when anti-detection is on; the mode only controls where the values come from.
+
+**`synthetic` (default)** — the entire SMBIOS table is procedurally selected from the curated motherboard profile database, filtered to profiles matching the host's CPU vendor and socket. The manufacturer is chosen deterministically from `hwidSeed`, constrained to vendors that actually ship a board for the host's socket. Every `smbios.*` override is **rejected** (the build fails if set) — the full Type 0/1/2/3/11 values come from the profile. The system serial, baseboard serial, and UUID are always synthetic (derived from `hwidSeed`/`hwidSalt`); the chassis serial is the `"--"` placeholder that real desktop boards emit.
+
+**`manual`** — you provide the SMBIOS values yourself (e.g. to clone a specific physical board for licensing tie-ins). The base fields are required: `manufacturer`, `product`, `version`, `family`, `biosVersion`, `sku`. The extended Type 1/3/11 and Type 0/2 fields are optional, with two all-or-nothing rules:
+
+- **Type 1 `system*`** — if you set any of `systemManufacturer`/`systemProduct`/`systemVersion`/`systemFamily`, you must set all four. When none are set, they fall back to the Type 2 (baseboard) values. A partial override is forbidden because it would mix a user-provided Type 1 field with a Type 2 fallback, producing an incoherent Type 1 that real hardware never emits.
+- **Type 3 `chassis*`** — if you set any of `chassisManufacturer`/`chassisVersion`/`chassisAsset`/`chassisSku`, you must set all four. Real hardware always populates Type 3 (even with placeholders), so a partial chassis block is itself a fingerprint. When none are set, no `<chassis>` block is emitted.
+
+The serial and UUID are always synthetic in manual mode too (never leaked from the host), and the chassis serial is always `"--"`. Run `scripts/dump-host-smbios.sh` on the physical host to extract real values for manual mode.
 
 > **Enable anti-detection before the guest's first boot.**
 >

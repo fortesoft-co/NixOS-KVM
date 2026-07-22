@@ -1,4 +1,8 @@
-{ config, lib, pkgs }:
+{
+  config,
+  lib,
+  pkgs,
+}:
 with lib;
 let
   cfg = config.cfg.kvm;
@@ -100,10 +104,8 @@ let
       # Use the real manufacturer OUI when anti-detection is active so the NIC
       # matches the SMBIOS manufacturer. Fall back to the standard QEMU prefix
       # when anti-detection is off (normal VM behavior).
-      prefix = if guest.antiDetection.enable then
-        lib.toLower hostLib.hostManufacturer.oui
-      else
-        "52:54:00";
+      prefix =
+        if guest.antiDetection.enable then lib.toLower hostLib.hostManufacturer.oui else "52:54:00";
     in
     if net.mac != null then
       net.mac
@@ -139,10 +141,11 @@ let
   validProfiles =
     let
       sock = if cpuSocket != null then cpuSocket else "unknown";
-      m = allProfiles.${hostManufacturer.id} or {};
-      v = m.${cpuVendor} or {};
-      s = v.${sock} or [];
-    in s;
+      m = allProfiles.${hostManufacturer.id} or { };
+      v = m.${cpuVendor} or { };
+      s = v.${sock} or [ ];
+    in
+    s;
 
   # If we successfully parsed matching profiles from the database, use them.
   # Otherwise, fall back to the safe defaults from the manufacturer struct.
@@ -176,7 +179,11 @@ let
           p1 = substring 0 8 uuidHash;
           p2 = substring 8 4 uuidHash;
           p3 = "4${substring 13 3 uuidHash}"; # Force version 4
-          variantNibble = let v = hexToInt (substring 16 1 uuidHash); in substring (lib.mod v 4) 1 "89ab";
+          variantNibble =
+            let
+              v = hexToInt (substring 16 1 uuidHash);
+            in
+            substring (lib.mod v 4) 1 "89ab";
           p4 = "${variantNibble}${substring 17 3 uuidHash}"; # Derive variant
           p5 = substring 20 12 uuidHash;
         in
@@ -190,13 +197,25 @@ let
       # hashes. Type 3 (chassis) serial is NOT synthesized — real desktop boards
       # almost universally emit a placeholder ("--") there, so we use the
       # profile's chassisSerial value verbatim (always a placeholder in the DB).
-      serialFromHash = h:
-        let bAt = i: hexToInt (substring (i * 2) 2 h); in
+      serialFromHash =
+        h:
+        let
+          bAt = i: hexToInt (substring (i * 2) 2 h);
+        in
         concatStrings (genList (i: substring (lib.mod (bAt i) 36) 1 alnumChars) 14);
-      syntheticSerial = serialFromHash serialHash;       # Type 1 (System)
-      baseboardSerial = serialFromHash baseSerialHash;   # Type 2 (Baseboard)
+      syntheticSerial = serialFromHash serialHash; # Type 1 (System)
+      baseboardSerial = serialFromHash baseSerialHash; # Type 2 (Baseboard)
 
       # OS / firmware
+      #
+      # <smbios mode='sysinfo'/> is the line that actually wires the
+      # <sysinfo type='smbios'> block (defined below) into the guest. libvirt
+      # silently ignores the entire sysinfo block unless <os> references it via
+      # this element — without it, every profiled Type 0/1/2/3/11 value, the
+      # synthetic serials, the chassis and OEM strings, none of it reaches the
+      # guest (only QEMU's default SMBIOS from the patch would apply). Gated on
+      # smbiosXML so it's emitted exactly when there's a sysinfo block to apply.
+      smbiosOsEntry = optionalString (smbiosXML != "") "<smbios mode='sysinfo'/>";
       osXML =
         if guest.firmware == "uefi" then
           if guest.secureBoot then
@@ -204,16 +223,19 @@ let
               <os firmware='efi'>
                 <type arch='${guest.architecture}' machine='${guest.machineType}'>hvm</type>
                 <feature name='secure-boot'/>
+                ${smbiosOsEntry}
               </os>''
           else
             ''
               <os firmware='efi'>
                 <type arch='${guest.architecture}' machine='${guest.machineType}'>hvm</type>
+                ${smbiosOsEntry}
               </os>''
         else
           ''
             <os>
               <type arch='${guest.architecture}' machine='${guest.machineType}'>hvm</type>
+              ${smbiosOsEntry}
             </os>'';
 
       # Features
@@ -222,7 +244,9 @@ let
           <acpi/>
           <apic/>
           ${optionalString guest.secureBoot "<smm state='on'/>"}
-          ${optionalString (guest.cpu.hidden || guest.antiDetection.enable) "<kvm><hidden state='on'/></kvm>"}
+          ${optionalString (
+            guest.cpu.hidden || guest.antiDetection.enable
+          ) "<kvm><hidden state='on'/></kvm>"}
           ${optionalString guest.antiDetection.enable ''
             <hyperv>
               <vendor_id state='on' value='${if cpuVendor == "amd" then "AuthenticAMD" else "GenuineIntel"}'/>
@@ -241,7 +265,14 @@ let
           "<model>${guest.cpu.reportedModel}</model>"
         else
           "";
-      effectiveCpuFlags = guest.cpu.flags ++ (optionals guest.antiDetection.enable [{ name = "hypervisor"; policy = "disable"; }]);
+      effectiveCpuFlags =
+        guest.cpu.flags
+        ++ (optionals guest.antiDetection.enable [
+          {
+            name = "hypervisor";
+            policy = "disable";
+          }
+        ]);
       cpuFlagsXML = concatMapStrings (
         f: "<feature policy='${f.policy}' name='${f.name}'/>"
       ) effectiveCpuFlags;
@@ -255,16 +286,21 @@ let
         </cpu>'';
 
       # Hard disks + CD-ROMs (boot orders auto-assigned)
-      effectiveDisks = if guest.antiDetection.enable then
-        map (d: d // {
-          bus = "sata";
-          # Strip VirtIO-specific performance flags that cause SATA validation failures
-          iothread = null;
-          aio = null;
-          discard = null;
-        }) guest.disks
-      else
-        guest.disks;
+      effectiveDisks =
+        if guest.antiDetection.enable then
+          map (
+            d:
+            d
+            // {
+              bus = "sata";
+              # Strip VirtIO-specific performance flags that cause SATA validation failures
+              iothread = null;
+              aio = null;
+              discard = null;
+            }
+          ) guest.disks
+        else
+          guest.disks;
       disksWithBoot = assignBootOrders effectiveDisks;
       diskEntries = imap0 (
         i: disk:
@@ -306,10 +342,11 @@ let
         </disk>'';
 
       # Network interfaces
-      effectiveNetworks = if guest.antiDetection.enable then
-        map (n: n // { model = if n.model == "virtio" then "e1000e" else n.model; }) guest.networks
-      else
-        guest.networks;
+      effectiveNetworks =
+        if guest.antiDetection.enable then
+          map (n: n // { model = if n.model == "virtio" then "e1000e" else n.model; }) guest.networks
+        else
+          guest.networks;
 
       ifaceEntries = imap0 (i: net: ''
         <interface type='${net.type}'>
@@ -373,22 +410,24 @@ let
       # Input devices
       # If antiDetection is enabled, we completely avoid adding explicit USB tablets
       # since libvirt will default to PS/2 which is stealthier than VirtIO/USB descriptors.
-      inputEntries = if guest.antiDetection.enable then
-        (optional guest.input.keyboard "<input type='keyboard' bus='ps2'/>")
-        ++ (optional guest.input.mouse "<input type='mouse' bus='ps2'/>")
-      else
-        (optional guest.input.tablet "<input type='tablet' bus='usb'/>")
-        ++ (optional guest.input.keyboard "<input type='keyboard' bus='ps2'/>")
-        ++ (optional guest.input.mouse "<input type='mouse' bus='ps2'/>");
+      inputEntries =
+        if guest.antiDetection.enable then
+          (optional guest.input.keyboard "<input type='keyboard' bus='ps2'/>")
+          ++ (optional guest.input.mouse "<input type='mouse' bus='ps2'/>")
+        else
+          (optional guest.input.tablet "<input type='tablet' bus='usb'/>")
+          ++ (optional guest.input.keyboard "<input type='keyboard' bus='ps2'/>")
+          ++ (optional guest.input.mouse "<input type='mouse' bus='ps2'/>");
 
       # Video
       # Anti-Detection: Avoid QXL and VirtIO, fallback to generic VGA if no proxying is used
-      effectiveVideoModel = if guest.antiDetection.enable && guest.video.model == "qxl" then
-        "vga"
-      else if guest.antiDetection.enable && guest.video.model == "virtio" then
-        "vga"
-      else
-        guest.video.model;
+      effectiveVideoModel =
+        if guest.antiDetection.enable && guest.video.model == "qxl" then
+          "vga"
+        else if guest.antiDetection.enable && guest.video.model == "virtio" then
+          "vga"
+        else
+          guest.video.model;
 
       videoEntry =
         if guest.paravirtGraphics.enable then
@@ -421,41 +460,62 @@ let
       #   Type 11 (OEM):     oemStrings list
       # The old code fed the SAME smbiosEntries list into both <system> and
       # <baseBoard>, making Type 1 == Type 2 byte-for-byte — a fingerprint real
-      # hardware never produces. Synthetic mode now pulls Type 1 and Type 2 from
-      # separate profile fields. (Manual mode still maps the single user-provided
-      # set into both Type 1 and Type 2; giving manual mode separate Type 1
-      # fields is a follow-up that requires new options.)
+      # hardware never produces. Synthetic mode pulls Type 1 and Type 2 from
+      # separate profile fields. Manual mode does the same when the user provides
+      # the separate system* fields (otherwise Type 1 falls back to Type 2).
       effectiveSmbios =
         if guest.antiDetection.enable then
           if guest.antiDetection.smbiosMode == "manual" then
             # MANUAL MODE: Use the user-provided hardware strings from smbios.*.
             # Serial and UUID are always synthetic (never leaked from the host).
-            # Type 1 and Type 2 both derive from the single user-provided set
-            # until separate Type 1 options are added. Type 3/11 are not emitted
-            # in manual mode (no fields to source them from yet).
-            let g = guest.smbios; in {
-              biosVendor  = g.manufacturer;
+            # Type 1 (system*) fields fall back to the Type 2 (baseboard) values
+            # when not provided, preserving the pre-Step-5 behavior (Type 1 ==
+            # Type 2). Type 3 (chassis*) and Type 11 (oemStrings) are only
+            # emitted when the user provides them (all-or-nothing per group,
+            # enforced by assertions). The chassis serial is always "--" (real
+            # desktop boards almost universally emit that placeholder).
+            let
+              g = guest.smbios;
+              # Type 1 fallback: use the separate system* field if set, else the
+              # flat Type 2 value.
+              sysMfr = if g.systemManufacturer != null then g.systemManufacturer else g.manufacturer;
+              sysProd = if g.systemProduct != null then g.systemProduct else g.product;
+              sysVer = if g.systemVersion != null then g.systemVersion else g.version;
+              sysFam = if g.systemFamily != null then g.systemFamily else g.family;
+              # Type 3 group active? (all-or-nothing enforced by assertions, so
+              # checking one field is enough.) When inactive, chassisSerial is
+              # "" so the chassis block is omitted entirely.
+              hasChassis = g.chassisManufacturer != null;
+            in
+            {
+              # Type 0 (BIOS)
+              biosVendor = g.manufacturer;
               biosVersion = g.biosVersion;
-              biosDate = "";  biosRelease = "";
-              systemManufacturer = g.manufacturer;
-              systemProduct = g.product;
-              systemVersion = g.version;
+              biosDate = g.biosDate;
+              biosRelease = g.biosRelease;
+              # Type 1 (System)
+              systemManufacturer = sysMfr;
+              systemProduct = sysProd;
+              systemVersion = sysVer;
               systemSerial = syntheticSerial;
               systemUuid = domainUuid;
               systemSku = g.sku;
-              systemFamily = g.family;
+              systemFamily = sysFam;
+              # Type 2 (Baseboard)
               boardManufacturer = g.manufacturer;
               boardProduct = g.product;
               boardVersion = g.version;
               boardSerial = baseboardSerial;
-              boardAsset = "";
-              boardLocation = "";
-              chassisManufacturer = "";
-              chassisVersion = "";
-              chassisSerial = "";
-              chassisAsset = "";
-              chassisSku = "";
-              oemStrings = [ ];
+              boardAsset = g.boardAsset;
+              boardLocation = g.boardLocation;
+              # Type 3 (Chassis) — only present when the user provided the group
+              chassisManufacturer = g.chassisManufacturer;
+              chassisVersion = g.chassisVersion;
+              chassisSerial = if hasChassis then "--" else "";
+              chassisAsset = g.chassisAsset;
+              chassisSku = g.chassisSku;
+              # Type 11 (OEM Strings)
+              oemStrings = g.oemStrings;
             }
           else
             # SYNTHETIC MODE (default): Procedurally select a motherboard profile
@@ -469,34 +529,35 @@ let
               # p.<field> may be absent in the legacy fallbackProfile; `or ""`
               # keeps this branch total.
               f = name: p.${name} or "";
-            in {
+            in
+            {
               # Type 0 (BIOS) — vendor matches the board vendor (attested).
-              biosVendor  = p.manufacturer;
+              biosVendor = p.manufacturer;
               biosVersion = p.biosVersion;
-              biosDate    = f "biosDate";
+              biosDate = f "biosDate";
               biosRelease = f "biosRelease";
               # Type 1 (System) — placeholders preserved verbatim from the probe.
               systemManufacturer = f "systemManufacturer";
-              systemProduct      = f "systemProduct";
-              systemVersion      = f "systemVersion";
-              systemSerial       = syntheticSerial;
-              systemUuid         = domainUuid;
-              systemSku          = f "systemSku";
-              systemFamily       = f "systemFamily";
+              systemProduct = f "systemProduct";
+              systemVersion = f "systemVersion";
+              systemSerial = syntheticSerial;
+              systemUuid = domainUuid;
+              systemSku = f "systemSku";
+              systemFamily = f "systemFamily";
               # Type 2 (Baseboard) — the real board model + synthetic serial.
               boardManufacturer = p.manufacturer;
-              boardProduct      = p.product;
-              boardVersion      = p.version;
-              boardSerial       = baseboardSerial;
-              boardAsset        = f "boardAsset";
-              boardLocation     = f "boardLocation";
+              boardProduct = p.product;
+              boardVersion = p.version;
+              boardSerial = baseboardSerial;
+              boardAsset = f "boardAsset";
+              boardLocation = f "boardLocation";
               # Type 3 (Chassis) — placeholders verbatim; serial is the profile
               # placeholder (always "--" in the DB), NOT synthesized.
               chassisManufacturer = f "chassisManufacturer";
-              chassisVersion      = f "chassisVersion";
-              chassisSerial       = f "chassisSerial";
-              chassisAsset        = f "chassisAsset";
-              chassisSku          = f "chassisSku";
+              chassisVersion = f "chassisVersion";
+              chassisSerial = f "chassisSerial";
+              chassisAsset = f "chassisAsset";
+              chassisSku = f "chassisSku";
               # Type 11 (OEM Strings) — atomic per probe, vendor-specific.
               oemStrings = p.oemStrings or [ ];
             }
@@ -505,9 +566,14 @@ let
           # (doesn't matter when not evading detection). biosVersion null so the
           # <bios> version entry is omitted; the domain <uuid> tag handles the
           # SMBIOS UUID, so systemUuid is null here.
-          let g = guest.smbios; in {
-            biosVendor  = g.manufacturer;  biosVersion = null;
-            biosDate = "";  biosRelease = "";
+          let
+            g = guest.smbios;
+          in
+          {
+            biosVendor = g.manufacturer;
+            biosVersion = null;
+            biosDate = "";
+            biosRelease = "";
             systemManufacturer = g.manufacturer;
             systemProduct = g.product;
             systemVersion = g.version;
@@ -534,62 +600,69 @@ let
       # <system> and <baseBoard>, making Type 1 == Type 2) into distinct
       # per-type entry lists, and add <chassis> (Type 3) and <oemStrings>
       # (Type 11) blocks.
-      smbiosEntry = name: val:
-        if val == null || val == "" then "" else "<entry name='${name}'>${val}</entry>";
+      smbiosEntry =
+        name: val: if val == null || val == "" then "" else "<entry name='${name}'>${val}</entry>";
 
       biosEntries = filter (s: s != "") [
-        (smbiosEntry "vendor"  effectiveSmbios.biosVendor)
+        (smbiosEntry "vendor" effectiveSmbios.biosVendor)
         (smbiosEntry "version" effectiveSmbios.biosVersion)
-        (smbiosEntry "date"    effectiveSmbios.biosDate)
+        (smbiosEntry "date" effectiveSmbios.biosDate)
         (smbiosEntry "release" effectiveSmbios.biosRelease)
       ];
       systemEntries = filter (s: s != "") [
         (smbiosEntry "manufacturer" effectiveSmbios.systemManufacturer)
-        (smbiosEntry "product"      effectiveSmbios.systemProduct)
-        (smbiosEntry "version"      effectiveSmbios.systemVersion)
-        (smbiosEntry "serial"       effectiveSmbios.systemSerial)
-        (smbiosEntry "uuid"         effectiveSmbios.systemUuid)
-        (smbiosEntry "sku"          effectiveSmbios.systemSku)
-        (smbiosEntry "family"       effectiveSmbios.systemFamily)
+        (smbiosEntry "product" effectiveSmbios.systemProduct)
+        (smbiosEntry "version" effectiveSmbios.systemVersion)
+        (smbiosEntry "serial" effectiveSmbios.systemSerial)
+        (smbiosEntry "uuid" effectiveSmbios.systemUuid)
+        (smbiosEntry "sku" effectiveSmbios.systemSku)
+        (smbiosEntry "family" effectiveSmbios.systemFamily)
       ];
       baseBoardEntries = filter (s: s != "") [
         (smbiosEntry "manufacturer" effectiveSmbios.boardManufacturer)
-        (smbiosEntry "product"      effectiveSmbios.boardProduct)
-        (smbiosEntry "version"      effectiveSmbios.boardVersion)
-        (smbiosEntry "serial"       effectiveSmbios.boardSerial)
-        (smbiosEntry "asset"        effectiveSmbios.boardAsset)
-        (smbiosEntry "location"     effectiveSmbios.boardLocation)
+        (smbiosEntry "product" effectiveSmbios.boardProduct)
+        (smbiosEntry "version" effectiveSmbios.boardVersion)
+        (smbiosEntry "serial" effectiveSmbios.boardSerial)
+        (smbiosEntry "asset" effectiveSmbios.boardAsset)
+        (smbiosEntry "location" effectiveSmbios.boardLocation)
       ];
       chassisEntries = filter (s: s != "") [
         (smbiosEntry "manufacturer" effectiveSmbios.chassisManufacturer)
-        (smbiosEntry "version"      effectiveSmbios.chassisVersion)
-        (smbiosEntry "serial"       effectiveSmbios.chassisSerial)
-        (smbiosEntry "asset"        effectiveSmbios.chassisAsset)
-        (smbiosEntry "sku"          effectiveSmbios.chassisSku)
+        (smbiosEntry "version" effectiveSmbios.chassisVersion)
+        (smbiosEntry "serial" effectiveSmbios.chassisSerial)
+        (smbiosEntry "asset" effectiveSmbios.chassisAsset)
+        (smbiosEntry "sku" effectiveSmbios.chassisSku)
       ];
       # OEM strings carry no name attribute — just <entry>value</entry>.
       oemStringEntries = map (s: "<entry>${s}</entry>") effectiveSmbios.oemStrings;
 
       # Emit one <tag>…</tag> block with all entries on a single line, or ""
       # if the block has no entries (so it can be filtered out below).
-      smbiosBlock = tag: entries:
-        if entries == [ ] then ""
-        else "          <${tag}>\n            ${concatStrings entries}\n          </${tag}>";
+      smbiosBlock =
+        tag: entries:
+        if entries == [ ] then
+          ""
+        else
+          "          <${tag}>\n            ${concatStrings entries}\n          </${tag}>";
 
       # <system> is the anchor: if it has nothing to emit, skip the whole
       # <sysinfo> (preserves the old `smbiosEntries != []` gating). <chassis>
       # and <oemStrings> are only present in synthetic mode; in manual/off
       # mode their entry lists are empty, so smbiosBlock returns "" and the
       # filter drops them.
-      smbiosXML = optionalString (systemEntries != [ ]) (concatStringsSep "\n" (filter (s: s != "") [
-        "        <sysinfo type='smbios'>"
-        (smbiosBlock "bios"       biosEntries)
-        (smbiosBlock "system"     systemEntries)
-        (smbiosBlock "baseBoard"  baseBoardEntries)
-        (smbiosBlock "chassis"    chassisEntries)
-        (smbiosBlock "oemStrings" oemStringEntries)
-        "        </sysinfo>"
-      ]));
+      smbiosXML = optionalString (systemEntries != [ ]) (
+        concatStringsSep "\n" (
+          filter (s: s != "") [
+            "        <sysinfo type='smbios'>"
+            (smbiosBlock "bios" biosEntries)
+            (smbiosBlock "system" systemEntries)
+            (smbiosBlock "baseBoard" baseBoardEntries)
+            (smbiosBlock "chassis" chassisEntries)
+            (smbiosBlock "oemStrings" oemStringEntries)
+            "        </sysinfo>"
+          ]
+        )
+      );
 
       # Serial console
       serialXML = optionalString guest.serial.enable (
@@ -644,13 +717,17 @@ let
       iothreadsXML = optionalString (maxIothread > 0) "<iothreads>${toString maxIothread}</iothreads>";
 
       # Extra QEMU args
-      effectiveQemuArgs = if guest.paravirtGraphics.enable then
-        guest.extraQemuArgs ++ [
-          "-display" "egl-headless,rendernode=/dev/dri/renderD128"
-          "-device" "virtio-vga-gl,blob=on,${guest.paravirtGraphics.backend}=on,hostmem=1024M"
-        ]
-      else
-        guest.extraQemuArgs;
+      effectiveQemuArgs =
+        if guest.paravirtGraphics.enable then
+          guest.extraQemuArgs
+          ++ [
+            "-display"
+            "egl-headless,rendernode=/dev/dri/renderD128"
+            "-device"
+            "virtio-vga-gl,blob=on,${guest.paravirtGraphics.backend}=on,hostmem=1024M"
+          ]
+        else
+          guest.extraQemuArgs;
 
       qemuCmdline = optionalString (effectiveQemuArgs != [ ]) ''
         <qemu:commandline>
@@ -700,5 +777,15 @@ let
 
 in
 {
-  inherit storageDir resolveDiskPath pciBdfToXml diskDev assignBootOrders macFor hexToInt smbiosProfiles generateXML;
+  inherit
+    storageDir
+    resolveDiskPath
+    pciBdfToXml
+    diskDev
+    assignBootOrders
+    macFor
+    hexToInt
+    smbiosProfiles
+    generateXML
+    ;
 }

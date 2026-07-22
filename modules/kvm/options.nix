@@ -59,7 +59,10 @@ let
                 description = "Enable Zero-Trace Hypervisor Cloaking (Anti-VM Detection) for this guest's XML configuration.";
               };
               smbiosMode = mkOption {
-                type = types.enum [ "synthetic" "manual" ];
+                type = types.enum [
+                  "synthetic"
+                  "manual"
+                ];
                 default = "synthetic";
                 description = ''
                   How to generate SMBIOS motherboard identifiers for the guest.
@@ -138,7 +141,6 @@ let
           default = { };
           description = "Paravirtualized graphics API proxying (VirtIO-GPU) configuration.";
         };
-
 
         # ───── Compute ─────
         memory = mkOption {
@@ -362,10 +364,10 @@ let
                 type = types.nullOr types.str;
                 default = null;
                 description = ''
-                  SMBIOS SKU number.
+                  SMBIOS Type 1 (System) SKU number.
 
-                  Optional in both modes. In synthetic mode this is the only
-                  smbios field that can be overridden (it has no profiling risk).
+                  Required in manual mode; rejected in synthetic mode (taken from
+                  the selected profile, like every other smbios field).
                 '';
               };
               biosVersion = mkOption {
@@ -378,6 +380,147 @@ let
                   BIOS version. Ignored in synthetic mode.
                 '';
               };
+
+              # ───── Extended SMBIOS fields (Type 0/1/2/3/11, Step 5) ─────
+              # These let manual mode specify distinct Type 1 (System) values
+              # separate from the Type 2 (Baseboard) fields above, plus Type 3
+              # (Chassis), Type 11 (OEM Strings), and the Type 0/2 additions.
+              # All optional in manual mode (all-or-nothing per type group) and
+              # BLOCKED in synthetic mode.
+
+              # Type 0 (BIOS) additions
+              biosDate = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS BIOS release date (Type 0), mm/dd/yyyy. Optional in
+                  manual mode; ignored in synthetic mode (taken from the
+                  selected profile).
+                '';
+                example = "12/07/2018";
+              };
+              biosRelease = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS BIOS revision (Type 0), major.minor. Optional in
+                  manual mode; ignored in synthetic mode.
+                '';
+                example = "5.13";
+              };
+
+              # Type 1 (System) — distinct from the Type 2 baseboard fields.
+              # When none of these are set in manual mode, they fall back to the
+              # corresponding Type 2 value (manufacturer/product/version/family),
+              # preserving the pre-Step-5 manual-mode behavior (Type 1 == Type 2).
+              # If any is set, all four must be set (enforced by assertions).
+              systemManufacturer = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 1 (System) manufacturer. Optional in manual mode
+                  (all-or-nothing with the other system* fields); falls back to
+                  `manufacturer` (Type 2) when unset. Blocked in synthetic mode.
+                '';
+              };
+              systemProduct = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 1 (System) product name. Optional in manual mode
+                  (all-or-nothing with system*); falls back to `product` (Type 2)
+                  when unset. Blocked in synthetic mode.
+                '';
+              };
+              systemVersion = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 1 (System) version. Optional in manual mode
+                  (all-or-nothing with system*); falls back to `version` (Type 2)
+                  when unset. Blocked in synthetic mode.
+                '';
+              };
+              systemFamily = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 1 (System) family. Optional in manual mode
+                  (all-or-nothing with system*); falls back to `family` (Type 2)
+                  when unset. Blocked in synthetic mode.
+                '';
+              };
+
+              # Type 2 (Baseboard) additions
+              boardAsset = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 2 (Baseboard) asset tag. Optional in manual mode;
+                  ignored in synthetic mode. Real boards often use "--" or
+                  "Default string" here.
+                '';
+              };
+              boardLocation = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 2 (Baseboard) location in chassis. Optional in
+                  manual mode; ignored in synthetic mode.
+                '';
+              };
+
+              # Type 3 (Chassis) — all-or-nothing in manual mode. When none are
+              # set, no <chassis> block is emitted in manual mode. The chassis
+              # serial is always the "--" placeholder (real desktop boards
+              # almost universally emit that, and serials stay non-correlatable);
+              # it is not user-settable.
+              chassisManufacturer = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 3 (Chassis) manufacturer. Optional in manual mode
+                  (all-or-nothing with the other chassis* fields). Blocked in
+                  synthetic mode.
+                '';
+              };
+              chassisVersion = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 3 (Chassis) version. Optional in manual mode
+                  (all-or-nothing with chassis*). Blocked in synthetic mode.
+                '';
+              };
+              chassisAsset = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 3 (Chassis) asset tag. Optional in manual mode
+                  (all-or-nothing with chassis*). Blocked in synthetic mode.
+                '';
+              };
+              chassisSku = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  SMBIOS Type 3 (Chassis) SKU number. Optional in manual mode
+                  (all-or-nothing with chassis*). Blocked in synthetic mode.
+                '';
+              };
+
+              # Type 11 (OEM Strings) — a list. Empty by default (no <oemStrings>
+              # block emitted in manual mode when empty).
+              oemStrings = mkOption {
+                type = types.listOf types.str;
+                default = [ ];
+                description = ''
+                  SMBIOS Type 11 (OEM Strings) entries. Optional in manual mode;
+                  blocked in synthetic mode (taken atomically from the selected
+                  profile). Each string becomes one <entry> in the <oemStrings>
+                  block.
+                '';
+              };
             };
           };
           default = { };
@@ -385,10 +528,15 @@ let
             SMBIOS fields exposed to the guest. Maps to
             <sysinfo type='smbios'>.
 
-            In synthetic mode (default), these are ignored except `sku`.
-            In manual mode, manufacturer/product/version/family/biosVersion are
-            required (run `scripts/dump-host-smbios.sh` to extract your host values,
-            or provide custom values).
+            In synthetic mode (default), all fields are rejected — the full
+            Type 0/1/2/3/11 values come from the procedurally selected
+            motherboard profile.
+            In manual mode, manufacturer/product/version/family/biosVersion/sku
+            are required; the extended Type 1 (system*), Type 3 (chassis*),
+            Type 11 (oemStrings), and Type 0/2 (biosDate/biosRelease/boardAsset/
+            boardLocation) fields are optional (all-or-nothing per type group).
+            Run `scripts/dump-host-smbios.sh` to extract your host values, or
+            provide custom values.
             serial is always synthetic when antiDetection is enabled.
           '';
         };
@@ -1119,7 +1267,7 @@ let
     };
 in
 {
-  imports = [];
+  imports = [ ];
 
   options.cfg.kvm.host = {
     hwidSeed = mkOption {

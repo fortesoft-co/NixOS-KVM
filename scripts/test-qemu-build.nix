@@ -3,17 +3,21 @@ let
   pkgs = import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/nixos-unstable.tar.gz") {};
   lib = pkgs.lib;
 
-  # Simulate the KVM host configuration
+  # Simulate the KVM host configuration. cpuVendor/cpuSocket are set
+  # explicitly so the socket-aware manufacturer selection is deterministic
+  # (mirrors the real libvirtd.nix path, which uses hostLib.hostManufacturer).
   config = {
     cfg.kvm.host = {
-      # Use the same seed from our previous tests (which maps to Gigabyte)
+      # Use the same seed from our previous tests
       hwidSeed = "a1b2c3d4-e5f6-4a7b-8c9d-0123456789ab";
+      cpuVendor = "intel";
+      cpuSocket = "LGA1700";
     };
   };
 
   # Import the hostLib to access the manufacturer registry
   hostLib = import ../modules/kvm/host/lib.nix { inherit config lib pkgs; };
-  manufacturer = hostLib.selectManufacturer config.cfg.kvm.host.hwidSeed;
+  manufacturer = hostLib.hostManufacturer;
 
   # Replicate the exact dynamic patch derivation from libvirtd.nix
   dynamicPatch = pkgs.runCommand "qemu-anti-detection-dynamic.patch" {} ''
