@@ -184,8 +184,21 @@ let
       let
         cn = extractCodename codename;
         found = findFirst (e: e.codename != null && e.codename == cn) null cpuPackages.packageAmd;
+        result = if found != null then found.socket else null;
+        # Desktop-APU disambiguation: Cezanne/Renoir/Picasso/Raven Ridge/Phoenix
+        # codenames cover BOTH desktop G-suffix APUs (AM4/AM5) and mobile
+        # U/H-suffix APUs (FP5/FP6/FP7/...). CPU-X maps these to the MOBILE
+        # socket, so a desktop 5600G would wrongly get FP6. A 4-digit model
+        # number followed by 'G' in the brand string (5600G, 8600G) is a
+        # desktop APU. When the codename match returns a mobile socket AND the
+        # brand string shows this pattern, return null so the resolver falls
+        # through to layer 3 (detectAmdSocket), which has the Ryzen
+        # generation → AM4/AM5 logic. Mobile CPUs (out of scope) keep CPU-X's
+        # mobile socket unchanged.
+        isMobileSocket = s: s != null && builtins.match "F[LPT][0-9].*" s != null;
+        isDesktopApu = builtins.match ".*[0-9]{4}G.*" brandstr != null;
       in
-      if found != null then found.socket else null
+      if result != null && isMobileSocket result && isDesktopApu then null else result
     else if vendor == "intel" then
       let
         stripped = stripSuffix (stripGenPrefix brandstr);

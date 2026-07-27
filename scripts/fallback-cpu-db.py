@@ -60,16 +60,26 @@ DESIGN PRINCIPLES
    that's a profile-library concern (see fallback-smbios.py), not a
    socket-detection concern. The socket is still real and detectable.
 
-KNOWN LIMITATION — AMD codename ambiguity (pre-existing, NOT fixed here)
+AMD DESKTOP-APU DISAMBIGUATION (handled in host/lib.nix, not here)
 ────────────────────────────────────────────────────────────────────────
-AMD codename matching can't distinguish desktop from mobile when the
-same codename covers both. Example: `Cezanne` = Ryzen 5000G desktop (AM4)
-AND Ryzen 5000U mobile (FP6). CPU-X maps Cezanne → FP6, so a desktop
-5600G/5700G gets layer-2 socket "FP6" (wrong, should be AM4), and the
-resolver does NOT fall through to layer 3 (layer 2 returned non-null).
-This degrades the guest to fallbackProfile. Fixing it requires brand-
-string-based matching for AMD (disambiguate by model number), which is
-out of scope for this resilience pass. Tracked as a follow-up.
+AMD codename matching can't distinguish desktop from mobile when the same
+codename covers both. The ambiguous codenames are Cezanne, Renoir, Picasso,
+Raven Ridge (desktop G-suffix APU → AM4, mobile U/H-suffix → FP5/FP6) and
+Phoenix (desktop 8600G/8700G → AM5, mobile → FP7/FP8). CPU-X maps all of
+these to the MOBILE socket.
+
+This is NOT fixed with fallback data here — it's fixed in detectSocketFromDatabase
+(host/lib.nix): when a codename match returns a mobile socket (F[LPT][0-9].*)
+AND the brand string shows a desktop-APU pattern (4-digit model + 'G', e.g.
+5600G, 8600G), layer 2 returns null so the resolver falls through to layer 3
+(detectAmdSocket), which has the Ryzen generation → AM4/AM5 logic. Mobile CPUs
+(out of scope) keep CPU-X's mobile socket unchanged. Verified by the AMD
+cases in test-cpu-socket.nix.
+
+Because the fix defers to layer 3, the ambiguous APU codenames are
+INTENTIONALLY NOT added to FALLBACK_AMD below — if CPU-X drops Cezanne, the
+codename match returns null directly and the resolver still falls to layer 3.
+No fallback entry is needed for the disambiguation to work.
 
 COVERAGE
 ────────
