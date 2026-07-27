@@ -354,7 +354,9 @@ let
                 type = types.nullOr types.str;
                 default = null;
                 description = ''
-                  SMBIOS family string (Type 2 Baseboard).
+                  SMBIOS family string (Type 1 System). This is the flat fallback
+                  used when `systemFamily` is unset; it does NOT come from Type 2
+                  (Baseboard), which has no Family field.
 
                   When antiDetection.smbiosMode = "manual", set this to your desired
                   family string. Ignored in synthetic mode.
@@ -411,9 +413,9 @@ let
 
               # Type 1 (System) — distinct from the Type 2 baseboard fields.
               # When none of these are set in manual mode, they fall back to the
-              # corresponding Type 2 value (manufacturer/product/version/family),
-              # preserving the pre-Step-5 manual-mode behavior (Type 1 == Type 2).
-              # If any is set, all four must be set (enforced by assertions).
+              # flat baseboard value (manufacturer/product/version, which are Type 2)
+              # — except `family`, which is itself a Type 1 field (Type 2 has no
+              # Family). If any is set, all four must be set (enforced by assertions).
               systemManufacturer = mkOption {
                 type = types.nullOr types.str;
                 default = null;
@@ -446,8 +448,8 @@ let
                 default = null;
                 description = ''
                   SMBIOS Type 1 (System) family. Optional in manual mode
-                  (all-or-nothing with system*); falls back to `family` (Type 2)
-                  when unset. Blocked in synthetic mode.
+                  (all-or-nothing with system*); falls back to `family` (also
+                  Type 1) when unset. Blocked in synthetic mode.
                 '';
               };
 

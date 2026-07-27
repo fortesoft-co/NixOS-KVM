@@ -231,7 +231,8 @@ in
                     you must set all four. A partial override would mix a user-provided Type 1
                     field with a Type 2 (baseboard) fallback, producing an incoherent Type 1
                     that real hardware never emits. When none are set, all four fall back to
-                    the Type 2 values manufacturer/product/version/family.
+                    the flat baseboard values manufacturer/product/version (Type 2) plus
+                    `family` (Type 1 — Type 2 has no Family field).
                   '';
                 }
                 # Anti-Detection — manual mode: Type 3 (chassis*) fields are all-or-nothing

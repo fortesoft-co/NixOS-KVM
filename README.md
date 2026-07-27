@@ -194,7 +194,7 @@ Base options.
 | `smbios.manufacturer` | str? | `null` | Type 2 (Baseboard) manufacturer. |
 | `smbios.product` | str? | `null` | Type 2 (Baseboard) product name. |
 | `smbios.version` | str? | `null` | Type 2 (Baseboard) version. |
-| `smbios.family` | str? | `null` | Type 2 (Baseboard) family. |
+| `smbios.family` | str? | `null` | Type 1 (System) family (flat fallback for `systemFamily`). |
 | `smbios.biosVersion` | str? | `null` | Type 0 (BIOS) version. |
 | `smbios.sku` | str? | `null` | Type 1 (System) SKU. |
 | `smbios.serial` | str? | `null` | Type 1 (System) serial. |
@@ -567,7 +567,7 @@ Setting `cfg.kvm.host.antiDetection.patchKernel = true` applies a KVM RDTSC timi
 
 **`manual`** — you provide the SMBIOS values yourself (e.g. to clone a specific physical board for licensing tie-ins). The base fields are required: `manufacturer`, `product`, `version`, `family`, `biosVersion`, `sku`. The extended Type 1/3/11 and Type 0/2 fields are optional, with two all-or-nothing rules:
 
-- **Type 1 `system*`** — if you set any of `systemManufacturer`/`systemProduct`/`systemVersion`/`systemFamily`, you must set all four. When none are set, they fall back to the Type 2 (baseboard) values. A partial override is forbidden because it would mix a user-provided Type 1 field with a Type 2 fallback, producing an incoherent Type 1 that real hardware never emits.
+- **Type 1 `system*`** — if you set any of `systemManufacturer`/`systemProduct`/`systemVersion`/`systemFamily`, you must set all four. When none are set, they fall back to the flat baseboard values (`manufacturer`/`product`/`version`, which are Type 2) plus `family` (Type 1 — Type 2 has no Family field). A partial override is forbidden because it would mix a user-provided Type 1 field with a baseboard fallback, producing an incoherent Type 1 that real hardware never emits.
 - **Type 3 `chassis*`** — if you set any of `chassisManufacturer`/`chassisVersion`/`chassisAsset`/`chassisSku`, you must set all four. Real hardware always populates Type 3 (even with placeholders), so a partial chassis block is itself a fingerprint. When none are set, no `<chassis>` block is emitted.
 
 The serial and UUID are always synthetic in manual mode too (never leaked from the host), and the chassis serial is always `"--"`. Run `scripts/dump-host-smbios.sh` on the physical host to extract real values for manual mode.

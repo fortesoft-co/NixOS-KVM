@@ -234,7 +234,9 @@ if [ "$type1_complete" = yes ]; then
 else
   echo "  # ── Type 1 (System) — incomplete on your host (all-or-nothing) ──"
   echo "  # If you fill any in, you must set ALL four. When all four are"
-  echo "  # unset, they fall back to the Type 2 values (and `family`) above."
+  echo "  # unset, they fall back to the flat baseboard values above"
+  echo "  # (manufacturer/product/version are Type 2; `family` is Type 1 —"
+  echo "  # Type 2 has no Family field)."
   echo "  #   systemManufacturer = \"$(escape_nix "${sys_manufacturer:-}")\";"
   echo "  #   systemProduct = \"$(escape_nix "${sys_product:-}")\";"
   echo "  #   systemVersion = \"$(escape_nix "${sys_version:-}")\";"
