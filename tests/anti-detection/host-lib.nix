@@ -71,7 +71,7 @@ let
         { vendor = "intel"; model = "Intel(R) Xeon(R) Platinum 8470";         want = "LGA4677"; }
         { vendor = "intel"; model = "Intel(R) Xeon(R) Gold 6338";             want = "LGA3647"; }
         # Intel — Xeon W (lowercase 'w' → LGA1700; uppercase W- → LGA2066)
-        { vendor = "intel"; model = "Intel(R) Xeon(R) w7-2495X";             want = "LGA1700"; }
+        { vendor = "intel"; model = "Intel(R) Xeon(R) w7-2495X";             want = "LGA4677"; }
         { vendor = "intel"; model = "Intel(R) Xeon(R) W-3175X";              want = "LGA2066"; }
         # Intel — unrecognized → null
         { vendor = "intel"; model = "Intel Pentium 4";                       want = null; }
