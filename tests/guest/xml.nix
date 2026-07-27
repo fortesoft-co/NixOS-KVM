@@ -14,7 +14,7 @@
 # XML assembly + the other sections end-to-end via xpath, without extracting them.
 #
 # Standalone build:
-#   nix build .#checks.x86_64-linux.guest.xml --no-link
+#   nix build .#checks.x86_64-linux.guest-xml --no-link
 { lib, pkgs }:
 with lib;
 let
