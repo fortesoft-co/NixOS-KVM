@@ -1,13 +1,13 @@
 # Layer 1 smoke test for socket-detection backstops + AMD APU fix.
-# Imports the REAL cpu-packages.nix and replicates detectSocketFromDatabase's
-# matching logic for both Intel and AMD, then asserts results for
-# representative brand strings / codenames.
+# Imports the REAL detectSocketFromDatabase from host/lib.nix (no replicated
+# logic) and asserts results for representative brand strings / codenames.
 #
 # Returns `true` on success, throws with a failure report on failure, so it
 # can be wired as an eval-time flake check (see flake.nix checks output).
 #
 # Standalone run (for dev iteration):
 #   nix-instantiate --eval --strict --arg lib '(import <nixpkgs> {}).lib' \
+#     --arg pkgs '(import <nixpkgs> {}).legacyPackages.x86_64-linux' \
 #     tests/anti-detection/cpu-socket.nix
 #
 # This is the first module of the Layer 1 testing strategy in CONTEXT.md.
@@ -20,43 +20,23 @@
 #   - AMD mobile (out of scope) keeping CPU-X's mobile socket unchanged.
 #   - AMD non-APU codenames (Vermeer, Raphael, Genoa, Storm Peak) returning
 #     their socket directly.
-{ lib }:
+{ lib, pkgs }:
 with lib;
 let
-  cpuPackages = import ../../modules/kvm/host/cpu-packages.nix { inherit lib; };
-
-  # Replicated from host/lib.nix (kept in sync by hand here; a future Layer 1
-  # harness should import the real functions rather than duplicate them).
-  stripSuffix = s:
-    let m = builtins.match "^(.*[0-9])[A-Z]*$" s;
-    in if m != null then builtins.elemAt m 0 else s;
-  stripGenPrefix = s:
-    let m = builtins.match "^[0-9]+th Gen (.*)" s;
-    in if m != null then builtins.elemAt m 0 else s;
-  extractCodename = s:
-    let m = builtins.match ".*[(]([^)]+)[)].*" s;
-    in if m != null then builtins.elemAt m 0 else s;
-
-  # Layer-2 Intel lookup (mirrors detectSocketFromDatabase Intel branch).
-  detectIntel = brandstr:
-    let
-      stripped = stripSuffix (stripGenPrefix brandstr);
-      found = findFirst (e:
-        e.model != null && hasPrefix (stripSuffix e.model) stripped
-      ) null cpuPackages.packageIntel;
-    in if found != null then found.socket else null;
-
-  # Layer-2 AMD lookup (mirrors detectSocketFromDatabase AMD branch, WITH the
-  # desktop-APU defer logic).
-  detectAmd = codename: brandstr:
-    let
-      cn = extractCodename codename;
-      found = findFirst (e: e.codename != null && e.codename == cn) null cpuPackages.packageAmd;
-      result = if found != null then found.socket else null;
-      isMobileSocket = s: s != null && builtins.match "F[LPT][0-9].*" s != null;
-      isDesktopApu = builtins.match ".*[0-9]{4}G.*" brandstr != null;
-    in
-    if result != null && isMobileSocket result && isDesktopApu then null else result;
+  # Mock config with explicit cpuVendor/cpuSocket (no IFD). The functions
+  # under test don't read these, but host/lib.nix's `let` bindings reference
+  # them lazily — explicit non-"auto" values guarantee the IFD bindings
+  # (cpuid_tool / proc/cpuinfo) never fire.
+  config = {
+    cfg.kvm.host = {
+      hwidSeed = "test-seed-1234";
+      cpuVendor = "intel";
+      cpuSocket = "LGA1700";
+      antiDetection = { patchQemu = false; patchKernel = false; };
+    };
+  };
+  hostLib = import ../../modules/kvm/host/lib.nix { inherit config lib pkgs; };
+  inherit (hostLib) detectSocketFromDatabase;
 
   # Intel cases: (brandstr, expected). "Backstop" cases are NOT in CPU-X.
   intelCases = [
@@ -108,13 +88,14 @@ let
   intelResults = map (c: {
     label = c.brandstr;
     inherit (c) expected;
-    got = detectIntel c.brandstr;
+    # Intel branch ignores codename — pass null.
+    got = detectSocketFromDatabase "intel" null c.brandstr;
   }) intelCases;
 
   amdResults = map (c: {
     label = "${c.codename} | ${c.brandstr}";
     inherit (c) expected;
-    got = detectAmd c.codename c.brandstr;
+    got = detectSocketFromDatabase "amd" c.codename c.brandstr;
   }) amdCases;
 
   results = intelResults ++ amdResults;

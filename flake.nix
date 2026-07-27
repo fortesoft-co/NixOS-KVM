@@ -38,7 +38,7 @@
         # at flake-eval time; throws on failure (failing the check), produces
         # a trivial derivation on success.
         anti-detection-cpu-socket =
-          assert (import ./tests/anti-detection/cpu-socket.nix { inherit (pkgs) lib; }) == true;
+          assert (import ./tests/anti-detection/cpu-socket.nix { inherit (pkgs) lib; inherit pkgs; }) == true;
           pkgs.runCommand "check-anti-detection-cpu-socket" { } "touch $out";
 
         # Layer 1: SMBIOS profile library + selection-logic assertions.
