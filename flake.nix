@@ -73,6 +73,17 @@
         # from-source build) and needs no KVM, so it stays in the default checks.
         anti-detection-guest-smbios = import ./tests/anti-detection/guest-smbios.nix { inherit (pkgs) lib; inherit pkgs; };
 
+        # Layer 3 Option B (unpatched, guest-OS boot): boots a minimal NixOS
+        # guest UNDER libvirt with the AD-on XML, runs the first-party probe
+        # sweep (dmidecode / /sys/class/dmi/id / lscpu / ip link / lspci / acpi
+        # tables / block models) from INSIDE the guest, and diffs the firmware
+        # tables the guest OS actually saw against the module's computed values.
+        # This is the only test that catches the rare class where QEMU/SeaBIOS
+        # silently ignores a passed -smbios block. Requires nested KVM (hard-
+        # fails if /dev/kvm is missing). Uses nixpkgs' prebuilt QEMU (no
+        # from-source build), so it stays in the default checks.
+        anti-detection-guest-smbios-boot = import ./tests/anti-detection/guest-smbios-boot.nix { inherit (pkgs) lib; inherit pkgs; };
+
         # General (non-anti-detection) build-time check: generateXML produces
         # well-formed libvirt XML (xmllint --noout) with correct structure
         # (xpath) + the cheap high-value AD on/off value checks. Composed

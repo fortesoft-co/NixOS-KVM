@@ -20,6 +20,7 @@
 { lib, pkgs }:
 with lib;
 let
+  checkLib = import ./check-lib.nix { inherit lib; };
   config = {
     cfg.kvm.host = {
       hwidSeed = "test-seed-1234";
@@ -139,8 +140,4 @@ let
   ];
   failures = filter (c: c.detail != null) allChecks;
 in
-  if failures == [] then true
-  else throw (
-    "host-lib test: ${toString (length failures)}/${toString (length allChecks)} checks FAILED:\n"
-    + concatStringsSep "\n" (map (c: "  [${c.name}] ${c.detail}") failures)
-  )
+  checkLib.mkChecks "host-lib test" allChecks

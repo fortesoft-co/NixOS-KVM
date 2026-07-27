@@ -24,6 +24,7 @@
 { lib, pkgs }:
 with lib;
 let
+  checkLib = import ./check-lib.nix { inherit lib; };
   # Minimal mock config. Explicit (non-"auto") cpuVendor/cpuSocket so the IFD
   # bindings in lib.nix stay lazy / non-firing. The functions under test don't
   # read these, but lib.nix's `let` bindings reference them lazily.
@@ -180,8 +181,4 @@ let
   ];
   failures = filter (c: c.detail != null) allChecks;
 in
-  if failures == [] then true
-  else throw (
-    "smbios-profiles test: ${toString (length failures)}/${toString (length allChecks)} checks FAILED:\n"
-    + concatStringsSep "\n" (map (c: "  [${c.name}] ${c.detail}") failures)
-  )
+  checkLib.mkChecks "smbios-profiles test" allChecks

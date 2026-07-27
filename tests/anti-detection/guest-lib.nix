@@ -16,6 +16,7 @@
 { lib, pkgs }:
 with lib;
 let
+  checkLib = import ./check-lib.nix { inherit lib; };
   # Mock config. Explicit cpuVendor/cpuSocket (no IFD). macFor reads
   # cfg.guests.${name}, cfg.host.hwidSeed, and hostManufacturer.oui (which
   # resolves via cpuVendor/cpuSocket/hwidSeed — all explicit here, no IFD).
@@ -212,8 +213,4 @@ let
   ];
   failures = filter (c: c.detail != null) allChecks;
 in
-  if failures == [] then true
-  else throw (
-    "guest-lib test: ${toString (length failures)}/${toString (length allChecks)} checks FAILED:\n"
-    + concatStringsSep "\n" (map (c: "  [${c.name}] ${c.detail}") failures)
-  )
+  checkLib.mkChecks "guest-lib test" allChecks

@@ -96,8 +96,8 @@ let
     domainName = "adon-disks";
     hwidSalt = "adon-disks-salt-0004";
     disks = [
-      { device = "disk"; format = "qcow2"; path = "disk0"; bus = "virtio"; boot = null; cache = null; aio = null; discard = null; iothread = null; ssd = false; serial = null; readOnly = false; }
-      { device = "cdrom"; format = "raw"; path = "seed.iso"; bus = "sata"; boot = null; cache = null; aio = null; discard = null; iothread = null; ssd = false; serial = null; readOnly = true; }
+      { device = "disk"; format = "qcow2"; path = "disk0"; bus = "virtio"; boot = null; cache = null; aio = null; discard = null; iothread = null; ssd = false; serial = null; readOnly = false; size = null; sourceUrl = null; }
+      { device = "cdrom"; format = "raw"; path = "seed.iso"; bus = "sata"; boot = null; cache = null; aio = null; discard = null; iothread = null; ssd = false; serial = null; readOnly = true; size = null; sourceUrl = null; }
     ];
   };
   # Variant: AD on + PCI passthrough (exercises hostdev XML).

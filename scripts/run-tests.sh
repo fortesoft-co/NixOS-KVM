@@ -35,14 +35,14 @@ cd "$SCRIPT_DIR/.."
 
 # Flat check names (each is a derivation under checks.x86_64-linux — nix flake
 # check does not recurse into nested attrsets, so they are flat; see flake.nix).
-ALL=(
-  anti-detection-cpu-socket
-  anti-detection-smbios-profiles
-  anti-detection-host-lib
-  anti-detection-guest-lib
-  anti-detection-guest-smbios
-  guest-xml
-)
+# Discovered from the flake itself so new checks are picked up automatically —
+# no hardcoded list to maintain.
+if ! DISCOVERED="$(nix eval --raw .#checks.x86_64-linux --apply 'x: builtins.concatStringsSep "\n" (builtins.attrNames x)' 2>/dev/null)"; then
+  echo "ERROR: could not discover checks from flake (nix eval failed)." >&2
+  echo "       Ensure the flake is accessible and nix eval works." >&2
+  exit 1
+fi
+mapfile -t ALL < <(printf '%s\n' "$DISCOVERED" | sort)
 
 SHOW_LOG=1
 TAIL=0
@@ -56,6 +56,10 @@ while [ $# -gt 0 ]; do
     --rebuild) REBUILD=1; shift;;
     --tail)
       TAIL="${2:?--tail needs an N (e.g. --tail 40)}"
+      if ! [[ "$TAIL" =~ ^[0-9]+$ ]]; then
+        echo "--tail expects a non-negative integer, got '$TAIL'" >&2
+        exit 2
+      fi
       shift 2
       ;;
     -h|--help)
@@ -109,13 +113,16 @@ show_log() {
   if [ "$SHOW_LOG" -eq 0 ]; then
     return
   fi
-  echo "----- nix log $attr -----"
   local log
   if ! log="$(nix log "$attr" 2>/dev/null)"; then
     echo "  (no log available — the check may never have been built)"
-    echo "----- end log -----"
     return
   fi
+  if [ -z "$log" ]; then
+    echo "  (no build log — eval-time check)"
+    return
+  fi
+  echo "----- nix log $attr -----"
   if [ "$TAIL" -gt 0 ]; then
     printf '%s\n' "$log" | tail -n "$TAIL"
   else
@@ -134,13 +141,17 @@ for c in "${SELECTED[@]}"; do
   if [ "$REBUILD" -eq 1 ]; then
     build_args+=(--rebuild)
   fi
-  # `if` consumes a non-zero exit so `set -e` doesn't abort the loop.
-  if nix build "${build_args[@]}" "$attr"; then
+  # Capture stderr; discard on success (just nix warnings like “git tree
+  # dirty” / “error (ignored): SQLite database”), show on failure (the error
+  # trace is the useful diagnostic). `if` consumes a non-zero exit so `set -e`
+  # doesn't abort the loop.
+  build_stderr=""
+  if build_stderr="$(nix build "${build_args[@]}" "$attr" 2>&1 1>/dev/null)"; then
     show_log "$attr"
     echo "✅ $c"
     PASS=$((PASS + 1))
   else
-    # nix build already printed the error + log tail; show the full log too.
+    printf '%s\n' "$build_stderr" >&2
     show_log "$attr"
     echo "❌ $c"
     FAIL=$((FAIL + 1))
