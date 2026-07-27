@@ -34,65 +34,23 @@ RAW_URL = f"https://raw.githubusercontent.com/{CPU_X_REPO}/master/{DATABASES_H_P
 # API URL to get the latest commit hash (for the header).
 COMMIT_API_URL = f"https://api.github.com/repos/{CPU_X_REPO}/commits/master"
 
-# ── Custom gap-filler entries ─────────────────────────────────────────────
-# These entries are NOT in CPU-X's databases.h upstream.  They cover CPUs that
-# CPU-X missed (mostly Intel server/workstation).  They are sourced from the
-# regex heuristic in host/lib.nix and are emitted after the CPU-X entries with
-# a '# CUSTOM' comment so they are visually distinct in the generated file.
-# To add more gap-fillers, append to these lists.
+# ── Custom gap-filler + fallback entries ────────────────────────────────
+# The curated fallback data (gap-fillers CPU-X missed + generation-level
+# backstops for common modern desktop/workstation CPUs) lives in a separate
+# module so this script stays focused on parse/emit logic. The fallback
+# entries are emitted AFTER the CPU-X entries, so specific CPU-X matches
+# win via findFirst and the fallbacks only fill gaps.
+# Edit fallback data in scripts/fallback-cpu-db.py.
+import importlib.util
+import pathlib
 
-# ── Socket overrides ──────────────────────────────────────────────────────
-# CPU-X sometimes maps a codename to the wrong socket.  These overrides
-# replace the socket value for specific CPU-X entries (matched by codename).
-# The override is applied during emission — the entry stays in its original
-# position in the list but with the corrected socket.
-SOCKET_OVERRIDES = {
-    # CPU-X returns "SP3r2" for all three Threadripper 1000-3000 codenames,
-    # but sTR4 (1000/2000) and sTRX4 (3000) are physically different, non-
-    # compatible sockets.  Correct the distinction:
-    "Whitehaven":   "sTR4",    # Threadripper 1000 (X399 chipset)
-    "Colfax":       "sTR4",    # Threadripper 2000 (X399 chipset)
-    "Castle Peak":  "sTRX4",   # Threadripper 3000 (TRX40 chipset)
-}
-
-CUSTOM_INTEL = [
-    # Xeon Scalable 4th gen (Sapphire Rapids) → LGA4677
-    # Brand strings: tier (8=Platinum, 6=Gold, 5/4=Silver/Bronze) + 2nd digit = gen (4).
-    { "codename": None, "model": "Intel(R) Xeon(R) Platinum 84", "socket": "LGA4677" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Gold 64",    "socket": "LGA4677" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Silver 44",  "socket": "LGA4677" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Bronze 34",  "socket": "LGA4677" },
-    # Xeon Scalable 5th gen (Emerald Rapids)
-    { "codename": None, "model": "Intel(R) Xeon(R) Platinum 85", "socket": "LGA4677" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Gold 65",    "socket": "LGA4677" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Silver 45",  "socket": "LGA4677" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Bronze 35",  "socket": "LGA4677" },
-    # Xeon Scalable 6th gen (Granite Rapids) → LGA4710 (new socket, not LGA4677)
-    # Granite Rapids uses a NEW model numbering: "6" prefix = generation 6, replacing
-    # the old convention where the first digit was the tier (8=Platinum, 6=Gold, etc.).
-    # SKUs: Platinum 69xx, Gold 69xx/67xx, Silver 66xx, Bronze 65xx.
-    # The tier name in the brand string disambiguates from older generations
-    # (e.g. old Gold 61xx-65xx used LGA3647/LGA4677, but new Gold 69xx/67xx uses LGA4710).
-    { "codename": None, "model": "Intel(R) Xeon(R) Platinum 69", "socket": "LGA4710" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Gold 69",     "socket": "LGA4710" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Gold 67",     "socket": "LGA4710" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Silver 66",  "socket": "LGA4710" },
-    { "codename": None, "model": "Intel(R) Xeon(R) Bronze 65",  "socket": "LGA4710" },
-    # Xeon W-2400/3400/2500/3500 (Sapphire Rapids-WS) → LGA4677
-    # New naming: lowercase 'w' + tier digit + hyphen (e.g. w3-2435, w7-3495X).
-    { "codename": None, "model": "Intel(R) Xeon(R) w", "socket": "LGA4677" },
-    # Old Xeon W (LGA2066): W-2100/2150/2170/2250/2270/3175X
-    # Brand format: uppercase W- + 4-digit model.
-    { "codename": None, "model": "Intel(R) Xeon(R) W-", "socket": "LGA2066" },
-]
-
-CUSTOM_AMD = [
-    # EPYC Siena (Zen 4c, 8004 series) → SP6
-    # libcpuid may return codename 'Genoa' for these (same CPUID family/model),
-    # but the brand string starts with 'AMD EPYC 8' (vs 'AMD EPYC 9' for Genoa/Turin).
-    { "codename": "Siena", "model": None,        "socket": "SP6" },
-    { "codename": None,    "model": "AMD EPYC 8", "socket": "SP6" },
-]
+_FB_PATH = pathlib.Path(__file__).resolve().parent / "fallback-cpu-db.py"
+_spec = importlib.util.spec_from_file_location("fallback_cpu_db", _FB_PATH)
+_fb = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_fb)
+CUSTOM_INTEL = _fb.FALLBACK_INTEL
+CUSTOM_AMD = _fb.FALLBACK_AMD
+SOCKET_OVERRIDES = _fb.SOCKET_OVERRIDES
 
 
 # ── Socket name normalization ──────────────────────────────────────────────
@@ -193,7 +151,7 @@ def emit_nix(intel: list[dict], amd: list[dict], commit: str, date: str) -> str:
     lines.append("# cpu-packages.nix — CPU codename/brand → socket mapping database.")
     lines.append("#")
     lines.append("# AUTO-GENERATED by scripts/sync-cpu-db.py — DO NOT EDIT BY HAND.")
-    lines.append("# (Custom gap-filler entries are emitted by the script from CUSTOM_INTEL/CUSTOM_AMD.)")
+    lines.append("# (Gap-filler + fallback entries are emitted from scripts/fallback-cpu-db.py.)")
     lines.append("#")
     lines.append(f"# Source:  https://github.com/{CPU_X_REPO}/blob/master/{DATABASES_H_PATH}")
     lines.append(f"# Commit:  {commit[:12]}")
@@ -209,8 +167,8 @@ def emit_nix(intel: list[dict], amd: list[dict], commit: str, date: str) -> str:
     lines.append("# Socket names are normalized: pin-count suffixes stripped,")
     lines.append("# 'LGA NNNN' collapsed to 'LGANNNN'. See normalize_socket() in the sync script.")
     lines.append("#")
-    lines.append("# Gap-filler entries (not in CPU-X upstream) are appended after the CPU-X")
-    lines.append("# entries with '# CUSTOM' markers. Edit them in scripts/sync-cpu-db.py.")
+    lines.append("# Gap-filler + fallback entries are appended after the CPU-X")
+    lines.append("# entries with '# CUSTOM' markers. Edit them in scripts/fallback-cpu-db.py.")
     lines.append("# ──────────────────────────────────────────────────────────────────────────")
     lines.append("")
     lines.append("{ lib }:")
@@ -228,7 +186,7 @@ def emit_nix(intel: list[dict], amd: list[dict], commit: str, date: str) -> str:
         sk = nix_string(e["socket"])
         lines.append(f"    {{ codename = {cn}; model = {md}; socket = {sk}; }}")
     if CUSTOM_INTEL:
-        lines.append("    # CUSTOM — gap-filler entries (not in CPU-X upstream)")
+        lines.append("    # CUSTOM — gap-filler + fallback entries (see scripts/fallback-cpu-db.py)")
         for e in CUSTOM_INTEL:
             cn = nix_string(e["codename"]) if e["codename"] else "null"
             md = nix_string(e["model"]) if e["model"] else "null"
@@ -250,7 +208,7 @@ def emit_nix(intel: list[dict], amd: list[dict], commit: str, date: str) -> str:
         sk = nix_string(sk_val)
         lines.append(f"    {{ codename = {cn}; model = {md}; socket = {sk}; }}")
     if CUSTOM_AMD:
-        lines.append("    # CUSTOM — gap-filler entries (not in CPU-X upstream)")
+        lines.append("    # CUSTOM — gap-filler + fallback entries (see scripts/fallback-cpu-db.py)")
         for e in CUSTOM_AMD:
             cn = nix_string(e["codename"]) if e["codename"] else "null"
             md = nix_string(e["model"]) if e["model"] else "null"
