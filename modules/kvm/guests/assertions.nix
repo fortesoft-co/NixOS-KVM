@@ -53,7 +53,7 @@ in
       ]
       ++
         # CPU socket detection — fail closed when auto-detection misses
-        (optional anyAntiDetection [
+        (optionals anyAntiDetection [
           {
             assertion = cfg.host.cpuSocket != "auto" || hostLib.cpuSocket != null;
             message = ''
