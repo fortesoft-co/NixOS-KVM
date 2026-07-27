@@ -151,6 +151,146 @@ let
   # Otherwise, fall back to the safe defaults from the manufacturer struct.
   smbiosProfiles = if length validProfiles > 0 then validProfiles else [ fallbackProfile ];
 
+  # Compute the effective SMBIOS values for a guest: manual / synthetic / off
+  # branching + per-type field mapping. Extracted from generateXML so it's
+  # directly testable (tests/anti-detection/guest-lib.nix exercises it with
+  # mock deps). generateXML calls this with the real computed serials/uuid/
+  # profileHash and the host-filtered smbiosProfiles. Taking the deps as args
+  # (rather than reading module-level bindings) lets the test control all
+  # inputs and assert the branching in isolation from profile selection.
+  computeEffectiveSmbios =
+    { guest, syntheticSerial, domainUuid, baseboardSerial, profileHash, smbiosProfiles, hexToInt }:
+    if guest.antiDetection.enable then
+      if guest.antiDetection.smbiosMode == "manual" then
+        # MANUAL MODE: Use the user-provided hardware strings from smbios.*.
+        # Serial and UUID are always synthetic (never leaked from the host).
+        # Type 1 (system*) fields fall back to the Type 2 (baseboard) values
+        # when not provided, preserving the pre-Step-5 behavior (Type 1 ==
+        # Type 2). Type 3 (chassis*) and Type 11 (oemStrings) are only
+        # emitted when the user provides them (all-or-nothing per group,
+        # enforced by assertions). The chassis serial is always "--" (real
+        # desktop boards almost universally emit that placeholder).
+        let
+          g = guest.smbios;
+          # Type 1 fallback: use the separate system* field if set, else the
+          # flat Type 2 value.
+          sysMfr = if g.systemManufacturer != null then g.systemManufacturer else g.manufacturer;
+          sysProd = if g.systemProduct != null then g.systemProduct else g.product;
+          sysVer = if g.systemVersion != null then g.systemVersion else g.version;
+          sysFam = if g.systemFamily != null then g.systemFamily else g.family;
+          # Type 3 group active? (all-or-nothing enforced by assertions, so
+          # checking one field is enough.) When inactive, chassisSerial is
+          # "" so the chassis block is omitted entirely.
+          hasChassis = g.chassisManufacturer != null;
+        in
+        {
+          # Type 0 (BIOS)
+          biosVendor = g.manufacturer;
+          biosVersion = g.biosVersion;
+          biosDate = g.biosDate;
+          biosRelease = g.biosRelease;
+          # Type 1 (System)
+          systemManufacturer = sysMfr;
+          systemProduct = sysProd;
+          systemVersion = sysVer;
+          systemSerial = syntheticSerial;
+          systemUuid = domainUuid;
+          systemSku = g.sku;
+          systemFamily = sysFam;
+          # Type 2 (Baseboard)
+          boardManufacturer = g.manufacturer;
+          boardProduct = g.product;
+          boardVersion = g.version;
+          boardSerial = baseboardSerial;
+          boardAsset = g.boardAsset;
+          boardLocation = g.boardLocation;
+          # Type 3 (Chassis) — only present when the user provided the group
+          chassisManufacturer = g.chassisManufacturer;
+          chassisVersion = g.chassisVersion;
+          chassisSerial = if hasChassis then "--" else "";
+          chassisAsset = g.chassisAsset;
+          chassisSku = g.chassisSku;
+          # Type 11 (OEM Strings)
+          oemStrings = g.oemStrings;
+        }
+      else
+        # SYNTHETIC MODE (default): Procedurally select a motherboard profile
+        # from the curated database. User smbios overrides are ignored
+        # (enforced by assertions — they can't even be set in this mode),
+        # except `sku` which carries no profiling risk.
+        let
+          profileSlice = substring 0 7 profileHash;
+          profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
+          p = elemAt smbiosProfiles profileIndex;
+          # p.<field> may be absent in the legacy fallbackProfile; `or ""`
+          # keeps this branch total.
+          f = name: p.${name} or "";
+        in
+        {
+          # Type 0 (BIOS) — vendor matches the board vendor (attested).
+          biosVendor = p.manufacturer;
+          biosVersion = p.biosVersion;
+          biosDate = f "biosDate";
+          biosRelease = f "biosRelease";
+          # Type 1 (System) — placeholders preserved verbatim from the probe.
+          systemManufacturer = f "systemManufacturer";
+          systemProduct = f "systemProduct";
+          systemVersion = f "systemVersion";
+          systemSerial = syntheticSerial;
+          systemUuid = domainUuid;
+          systemSku = f "systemSku";
+          systemFamily = f "systemFamily";
+          # Type 2 (Baseboard) — the real board model + synthetic serial.
+          boardManufacturer = p.manufacturer;
+          boardProduct = p.product;
+          boardVersion = p.version;
+          boardSerial = baseboardSerial;
+          boardAsset = f "boardAsset";
+          boardLocation = f "boardLocation";
+          # Type 3 (Chassis) — placeholders verbatim; serial is the profile
+          # placeholder (always "--" in the DB), NOT synthesized.
+          chassisManufacturer = f "chassisManufacturer";
+          chassisVersion = f "chassisVersion";
+          chassisSerial = f "chassisSerial";
+          chassisAsset = f "chassisAsset";
+          chassisSku = f "chassisSku";
+          # Type 11 (OEM Strings) — atomic per probe, vendor-specific.
+          oemStrings = p.oemStrings or [ ];
+        }
+    else
+      # antiDetection OFF — flat guest.smbios, no Type 3/11, Type 1 == Type 2
+      # (doesn't matter when not evading detection). biosVersion null so the
+      # <bios> version entry is omitted; the domain <uuid> tag handles the
+      # SMBIOS UUID, so systemUuid is null here.
+      let
+        g = guest.smbios;
+      in
+      {
+        biosVendor = g.manufacturer;
+        biosVersion = null;
+        biosDate = "";
+        biosRelease = "";
+        systemManufacturer = g.manufacturer;
+        systemProduct = g.product;
+        systemVersion = g.version;
+        systemSerial = g.serial;
+        systemUuid = null;
+        systemSku = g.sku;
+        systemFamily = g.family;
+        boardManufacturer = g.manufacturer;
+        boardProduct = g.product;
+        boardVersion = g.version;
+        boardSerial = g.serial;
+        boardAsset = "";
+        boardLocation = "";
+        chassisManufacturer = "";
+        chassisVersion = "";
+        chassisSerial = "";
+        chassisAsset = "";
+        chassisSku = "";
+        oemStrings = [ ];
+      };
+
   # ───────── XML generation ─────────
 
   generateXML =
@@ -463,137 +603,9 @@ let
       # hardware never produces. Synthetic mode pulls Type 1 and Type 2 from
       # separate profile fields. Manual mode does the same when the user provides
       # the separate system* fields (otherwise Type 1 falls back to Type 2).
-      effectiveSmbios =
-        if guest.antiDetection.enable then
-          if guest.antiDetection.smbiosMode == "manual" then
-            # MANUAL MODE: Use the user-provided hardware strings from smbios.*.
-            # Serial and UUID are always synthetic (never leaked from the host).
-            # Type 1 (system*) fields fall back to the Type 2 (baseboard) values
-            # when not provided, preserving the pre-Step-5 behavior (Type 1 ==
-            # Type 2). Type 3 (chassis*) and Type 11 (oemStrings) are only
-            # emitted when the user provides them (all-or-nothing per group,
-            # enforced by assertions). The chassis serial is always "--" (real
-            # desktop boards almost universally emit that placeholder).
-            let
-              g = guest.smbios;
-              # Type 1 fallback: use the separate system* field if set, else the
-              # flat Type 2 value.
-              sysMfr = if g.systemManufacturer != null then g.systemManufacturer else g.manufacturer;
-              sysProd = if g.systemProduct != null then g.systemProduct else g.product;
-              sysVer = if g.systemVersion != null then g.systemVersion else g.version;
-              sysFam = if g.systemFamily != null then g.systemFamily else g.family;
-              # Type 3 group active? (all-or-nothing enforced by assertions, so
-              # checking one field is enough.) When inactive, chassisSerial is
-              # "" so the chassis block is omitted entirely.
-              hasChassis = g.chassisManufacturer != null;
-            in
-            {
-              # Type 0 (BIOS)
-              biosVendor = g.manufacturer;
-              biosVersion = g.biosVersion;
-              biosDate = g.biosDate;
-              biosRelease = g.biosRelease;
-              # Type 1 (System)
-              systemManufacturer = sysMfr;
-              systemProduct = sysProd;
-              systemVersion = sysVer;
-              systemSerial = syntheticSerial;
-              systemUuid = domainUuid;
-              systemSku = g.sku;
-              systemFamily = sysFam;
-              # Type 2 (Baseboard)
-              boardManufacturer = g.manufacturer;
-              boardProduct = g.product;
-              boardVersion = g.version;
-              boardSerial = baseboardSerial;
-              boardAsset = g.boardAsset;
-              boardLocation = g.boardLocation;
-              # Type 3 (Chassis) — only present when the user provided the group
-              chassisManufacturer = g.chassisManufacturer;
-              chassisVersion = g.chassisVersion;
-              chassisSerial = if hasChassis then "--" else "";
-              chassisAsset = g.chassisAsset;
-              chassisSku = g.chassisSku;
-              # Type 11 (OEM Strings)
-              oemStrings = g.oemStrings;
-            }
-          else
-            # SYNTHETIC MODE (default): Procedurally select a motherboard profile
-            # from the curated database. User smbios overrides are ignored
-            # (enforced by assertions — they can't even be set in this mode),
-            # except `sku` which carries no profiling risk.
-            let
-              profileSlice = substring 0 7 profileHash;
-              profileIndex = lib.mod (hexToInt profileSlice) (length smbiosProfiles);
-              p = elemAt smbiosProfiles profileIndex;
-              # p.<field> may be absent in the legacy fallbackProfile; `or ""`
-              # keeps this branch total.
-              f = name: p.${name} or "";
-            in
-            {
-              # Type 0 (BIOS) — vendor matches the board vendor (attested).
-              biosVendor = p.manufacturer;
-              biosVersion = p.biosVersion;
-              biosDate = f "biosDate";
-              biosRelease = f "biosRelease";
-              # Type 1 (System) — placeholders preserved verbatim from the probe.
-              systemManufacturer = f "systemManufacturer";
-              systemProduct = f "systemProduct";
-              systemVersion = f "systemVersion";
-              systemSerial = syntheticSerial;
-              systemUuid = domainUuid;
-              systemSku = f "systemSku";
-              systemFamily = f "systemFamily";
-              # Type 2 (Baseboard) — the real board model + synthetic serial.
-              boardManufacturer = p.manufacturer;
-              boardProduct = p.product;
-              boardVersion = p.version;
-              boardSerial = baseboardSerial;
-              boardAsset = f "boardAsset";
-              boardLocation = f "boardLocation";
-              # Type 3 (Chassis) — placeholders verbatim; serial is the profile
-              # placeholder (always "--" in the DB), NOT synthesized.
-              chassisManufacturer = f "chassisManufacturer";
-              chassisVersion = f "chassisVersion";
-              chassisSerial = f "chassisSerial";
-              chassisAsset = f "chassisAsset";
-              chassisSku = f "chassisSku";
-              # Type 11 (OEM Strings) — atomic per probe, vendor-specific.
-              oemStrings = p.oemStrings or [ ];
-            }
-        else
-          # antiDetection OFF — flat guest.smbios, no Type 3/11, Type 1 == Type 2
-          # (doesn't matter when not evading detection). biosVersion null so the
-          # <bios> version entry is omitted; the domain <uuid> tag handles the
-          # SMBIOS UUID, so systemUuid is null here.
-          let
-            g = guest.smbios;
-          in
-          {
-            biosVendor = g.manufacturer;
-            biosVersion = null;
-            biosDate = "";
-            biosRelease = "";
-            systemManufacturer = g.manufacturer;
-            systemProduct = g.product;
-            systemVersion = g.version;
-            systemSerial = g.serial;
-            systemUuid = null;
-            systemSku = g.sku;
-            systemFamily = g.family;
-            boardManufacturer = g.manufacturer;
-            boardProduct = g.product;
-            boardVersion = g.version;
-            boardSerial = g.serial;
-            boardAsset = "";
-            boardLocation = "";
-            chassisManufacturer = "";
-            chassisVersion = "";
-            chassisSerial = "";
-            chassisAsset = "";
-            chassisSku = "";
-            oemStrings = [ ];
-          };
+      effectiveSmbios = computeEffectiveSmbios {
+        inherit guest syntheticSerial domainUuid baseboardSerial profileHash smbiosProfiles hexToInt;
+      };
 
       # SMBIOS XML construction — Step 3 & 4:
       # Split the old single smbiosEntries list (which was fed into BOTH
@@ -786,6 +798,7 @@ in
     macFor
     hexToInt
     smbiosProfiles
+    computeEffectiveSmbios
     generateXML
     ;
 }

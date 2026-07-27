@@ -62,8 +62,11 @@ let
   # e.g. "AMD Ryzen 9 7950X 16-Core Processor" → "7950"
   #      "Intel(R) Core(TM) i9-14900K"        → "14900"
   extractModelNum = modelName:
-    let m = builtins.match ".*[^0-9]([0-9]{4,5})[^0-9].*" modelName;
-    in if m != null then builtins.elemAt m 0 else "";
+    let
+      m = builtins.match ".*[^0-9]([0-9]{4,5})[^0-9].*" modelName;
+      mEnd = builtins.match ".*[^0-9]([0-9]{4,5})$" modelName;
+    in
+    if m != null then builtins.elemAt m 0 else if mEnd != null then builtins.elemAt mEnd 0 else "";
 
   # Decimal string → integer (builtins.fromJSON parses bare JSON numbers).
   toInt10 = s: builtins.fromJSON s;
@@ -80,9 +83,11 @@ let
       else if firstDigit == "7" then "SP3"      # Naples/Rome/Milan (7001-7003)
       else null                                # unrecognized EPYC — fail, don't guess
     else if hasInfix "Threadripper" modelName then
-      if firstDigit == "7" || firstDigit == "8" || firstDigit == "9" then "sTR5"  # 7000+
-      else if isPro then "WRX80"                  # PRO 3xxx/5xxx (WRX80; non-PRO is sTRX4)
-      else "sTRX4"                                # non-PRO 3xxx/5xxx or unknown
+      if firstDigit == "7" || firstDigit == "8" || firstDigit == "9" then "sTR5"  # 7000/8000/9000
+      else if isPro then "sWRX8"                  # PRO 3xxx/5xxx (sWRX8 socket)
+      else if firstDigit == "3" then "sTRX4"      # Threadripper 3000 (Castle Peak)
+      else if firstDigit == "1" || firstDigit == "2" then "sTR4"  # Threadripper 1000/2000 (Whitehaven/Colfax)
+      else null                                   # unrecognized Threadripper — fail, don't guess
     else if hasInfix "Ryzen" modelName then
       if firstDigit == "7" || firstDigit == "8" || firstDigit == "9" then "AM5"  # Zen 4+
       else "AM4"                                  # Zen 1/+/2/3 (1xxx-5xxx)
@@ -105,13 +110,17 @@ let
       #   Platinum 8470 → "8470" → gen "4" (4th gen)
       #   Gold 6338      → "6338" → gen "3" (3rd gen)
       xeonGen = if builtins.stringLength modelNum >= 2 then builtins.substring 1 1 modelNum else "";
-      # Xeon W: matches both old "W-NNNN" and new "wN-NNNN" naming conventions.
-      isXeonW = builtins.match ".*[Ww][0-9]*-[0-9]+.*" modelName != null;
+      # Xeon W: distinguish old uppercase "W-NNNN" (LGA2066) from new lowercase
+      # "wN-NNNN" (Sapphire Rapids-WS, LGA4677). The old isXeonW regex matched
+      # both and returned LGA1700 for both, which was wrong on both counts.
+      isXeonWOld = builtins.match ".*[W]-[0-9]+.*" modelName != null;
+      isXeonWNew = builtins.match ".*[w][0-9]+-[0-9]+.*" modelName != null;
     in
     if hasInfix "Ultra" modelName then
       "LGA1851"                                   # Core Ultra (Arrow Lake)
     else if hasInfix "Xeon" modelName then
-      if isXeonW then "LGA1700"                    # Xeon W-2xxx/3xxx (W790)
+      if isXeonWOld then "LGA2066"                 # old Xeon W-2100..3175X (LGA2066)
+      else if isXeonWNew then "LGA4677"             # new Xeon w-2xxx/3xxx (W790, LGA4677)
       else if xeonGen == "4" || xeonGen == "5" then "LGA4677"   # 4th/5th gen Scalable
       else if xeonGen == "6" then "LGA4710"             # 6th gen (Granite Rapids)
       else if xeonGen == "1" || xeonGen == "2" || xeonGen == "3" then "LGA3647"  # 1st-3rd gen
