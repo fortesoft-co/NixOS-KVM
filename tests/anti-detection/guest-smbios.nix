@@ -79,6 +79,17 @@ let
   #   ARGV_*     — raw space-free tokens for qemu-argv substring checks.
   #   EXPECTED_oem_count + EXPECTED_oem_N — OEM strings (Type 11), looped over
   #   by the probe script.
+  #
+  # NOTE: the EXPECTED_* key names here (sys_manufacturer, sys_product,
+  # chassis_asset, chassis_sku, bios_release, oem_*, ARGV_*) DIFFER from the
+  # boot tests' (sys_vendor, product_name, chassis_asset_tag, ...). This is
+  # DELIBERATE, not drift: Option A checks a different surface (virsh dumpxml
+  # xpath + domxml-to-native qemu-argv) than the boot tests (dmidecode/sysfs via
+  # a results-disk diff harness), so it consumes differently-named keys + extras
+  # (bios_release, OEM strings, ARGV tokens) the boot tests don't have. It is
+  # intentionally NOT a consumer of common.nix's mkExpectedValues/mkDiffHarness
+  # (which share the boot tests' 20-field core). If you ever unify the naming,
+  # update this probe (guest-smbios-probe.sh) to match.
   oemEntries = concatStringsSep "\n"
     (imap0 (i: s: "EXPECTED_oem_${toString (i + 1)}=${es s}") smb.oemStrings);
 

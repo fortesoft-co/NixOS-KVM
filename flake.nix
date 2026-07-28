@@ -92,5 +92,43 @@
         # the check.
         guest-xml = import ./tests/guest/xml.nix { inherit (pkgs) lib; inherit pkgs; };
       };
+
+      # ── Opt-in patch-build tests (Layer 2) ───────────────────────────────
+      # NOT in `checks` — these build QEMU / kernel from source, so they're
+      # slow and would make `nix flake check` impractical. Exposed under a
+      # separate top-level output so they're explicitly opt-in:
+      #
+      #   nix build .#patchBuilds.x86_64-linux.<name> --no-link -L
+      #
+      # Tier 2 (QEMU): verifies the dynamic manufacturer-token rewrite in
+      # host/libvirtd.nix produces a valid patch for ALL FOUR manufacturer
+      # tokens (apply-check, cheap, parallel) + a full QEMU 10.2.2 compile
+      # for the seed-selected default token (heavy). See
+      # tests/anti-detection/qemu-patch-build.nix for the two-level rationale.
+      patchBuilds.x86_64-linux = let
+        qemuPatch = import ./tests/anti-detection/qemu-patch-build.nix { inherit (pkgs) lib; inherit pkgs; };
+      in {
+        # Cheap half only — all four token patches apply cleanly to QEMU 10.2.2
+        # source (no from-source compile). Fast enough to run interactively.
+        anti-detection-qemu-applies = qemuPatch.applies;
+        # Heavy half — full QEMU 10.2.2 build with the default token's patch.
+        anti-detection-qemu-compile = qemuPatch.compile;
+        # Static binary string check on the compiled patched QEMU (needs the
+        # compile, but the check itself is just `strings | grep`). Verifies the
+        # dynamic sed produced the right token strings + the QEMU defaults / ASUS
+        # template are gone — proves the sed ran (uses a non-template token).
+        anti-detection-qemu-strings = qemuPatch.patchedStringCheck;
+        # Convenience: build everything (applies + compile + static string check).
+        anti-detection-qemu = qemuPatch.all;
+
+        # Layer 3 PATCHED-QEMU boot test (VERY heavy — builds patched QEMU from
+        # source on the test VM, then boots a guest under it; needs nested KVM
+        # to RUN). Verifies the QEMU string replacements surface in a booted
+        # guest (fw_cfg ACPI _HID: QEMU0002 -> <token>0002) and that the patched
+        # QEMU does not break AD SMBIOS/NIC/CPU surfacing (reuses Option B's
+        # 20-field regression). See tests/anti-detection/guest-smbios-patched.nix.
+        anti-detection-guest-smbios-patched =
+          import ./tests/anti-detection/guest-smbios-patched.nix { inherit (pkgs) lib; inherit pkgs; };
+      };
     };
 }

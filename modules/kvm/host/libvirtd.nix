@@ -104,15 +104,10 @@ in
           hostAd = import ./anti-detection.nix { inherit config lib pkgs; };
           manufacturer = hostAd.hostManufacturer;
           
-          # Dynamically rewrite the ASUS patch strings to match the selected manufacturer
-          dynamicPatch = pkgs.runCommand "qemu-anti-detection-dynamic.patch" {} ''
-            sed \
-              -e 's/ASUS Real Machine/${manufacturer.realMachine}/g' \
-              -e 's/M4A88TD-M/${manufacturer.defaultProduct}/g' \
-              -e 's/ASUS-PC/${manufacturer.patchToken}-PC/g' \
-              -e 's/ASUS/${manufacturer.patchToken}/g' \
-              ${../patches/qemu-10.2.2-anti-detection.patch} > $out
-          '';
+          # Dynamically rewrite the ASUS patch strings to match the selected
+          # manufacturer. mkDynamicPatch is the single source of truth for the sed
+          # recipe (shared with the patch-build tests) — no duplicated recipe.
+          dynamicPatch = hostAd.mkDynamicPatch manufacturer;
         in
         rec {
         version = if cfg.host.antiDetection.customQemuVersion != null then cfg.host.antiDetection.customQemuVersion else "10.2.2";

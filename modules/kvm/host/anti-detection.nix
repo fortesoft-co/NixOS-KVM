@@ -140,8 +140,25 @@ let
   # cpuid_tool during eval, which reads the BUILD machine's CPU — so for
   # remote/cross builds you should set cfg.kvm.host.cpuSocket explicitly.
   hostManufacturer = selectManufacturerForSocket cfg.host.hwidSeed cpuVendor cpuSocket;
+
+  # ───────── Dynamic QEMU patch adaptation ─────────
+  # The single source of truth for the sed recipe that adapts the ASUS-template
+  # QEMU patch (patches/qemu-10.2.2-anti-detection.patch) to a given manufacturer
+  # record: swaps the ASUS placeholders for the record's realMachine /
+  # defaultProduct / patchToken. Used by host/libvirtd.nix (with hostManufacturer)
+  # AND by the patch-build tests (tests/anti-detection/qemu-patch-build.nix, with
+  # each manufacturer) so the test exercises the EXACT production sed — no replica
+  # that could drift. Returns a store-path patch file.
+  mkDynamicPatch = m: pkgs.runCommand "qemu-anti-detection-${m.id}.patch" {} ''
+    sed \
+      -e 's/ASUS Real Machine/${m.realMachine}/g' \
+      -e 's/M4A88TD-M/${m.defaultProduct}/g' \
+      -e 's/ASUS-PC/${m.patchToken}-PC/g' \
+      -e 's/ASUS/${m.patchToken}/g' \
+      ${../patches/qemu-10.2.2-anti-detection.patch} > $out
+  '';
 in
 {
   inherit manufacturers nicOui selectManufacturer selectManufacturerForSocket
-    manufacturersForSocket hostManufacturer smbiosProfiles;
+    manufacturersForSocket hostManufacturer smbiosProfiles mkDynamicPatch;
 }

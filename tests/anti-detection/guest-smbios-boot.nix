@@ -22,6 +22,11 @@
 # cpuVendor/cpuSocket in common.nix). The guest image build uses the same
 # make-disk-image.nix machinery the NixOS test framework uses for its own nodes.
 #
+# The boot machinery (guest image build + test VM + driver templating) is
+# shared via common.nix's mkGuestImage / mkBootTest — extracted so the future
+# patched-QEMU / RDTSC boot variants reuse it without rewriting the
+# results-transport + nested-KVM scaffolding.
+#
 # Scripts are extracted into ./scripts/ to avoid maintaining shell/Python inside
 # Nix ''...'' strings (escaping issues, no syntax highlighting):
 #   scripts/guest-smbios-boot-guest-probe.sh  — runs inside the booted guest
@@ -35,9 +40,8 @@ with lib;
 let
   common = import ./common.nix { inherit lib pkgs; };
   inherit (common)
-    hwidSeed hwidSalt cpuVendor cpuSocket
-    baseGuest generateXML kvmTestModule
-    smb domainUuid expectedMac es;
+    baseGuest generateXML
+    mkGuestImage mkBootTest mkExpectedValues mkDiffHarness;
 
   # Option B adds a real boot disk (the NixOS qcow2 built below) and a raw
   # results disk to the base guest, and switches the NIC to the libvirt default
@@ -58,117 +62,31 @@ let
   xmlFile = pkgs.writeText "kvm-guest-adon-boot.xml" generatedXML;
 
   # ── Scripts (extracted into ./scripts/ for maintainability) ──────────────
-  # Pure shell, read via readFile — no '' escaping issues, proper highlighting.
-  guestProbe = pkgs.writeShellScript "guest-smbios-boot-guest-probe"
-    (readFile ./scripts/guest-smbios-boot-guest-probe.sh);
-  diffHarness = pkgs.writeShellScript "guest-smbios-boot-results-diff"
-    (readFile ./scripts/guest-smbios-boot-results-diff.sh);
+  # The probe is the shared base only (no test-specific extras for Option B);
+  # mkGuestImage runs the list and wraps the concat in one ===PROBE-START/END===
+  # marker pair. The diff harness + expected values are the shared 20-field core
+  # from common.nix (mkDiffHarness / mkExpectedValues) — Option B has no extras.
+  baseProbe = pkgs.writeShellScript "guest-probe-base"
+    (readFile ./scripts/guest-probe-base.sh);
+  diffHarness = mkDiffHarness { name = "guest-smbios-boot"; };
+  expectedValues = mkExpectedValues { name = "guest-smbios-boot"; };
 
-  # Expected-values file: shell-sourceable assignments generated from the same
-  # common.nix expected-value harness Option A uses. The diff harness sources
-  # this at runtime, keeping the shell script completely static.
-  expectedValues = pkgs.writeText "guest-smbios-boot-expected-values.sh" ''
-    EXPECTED_bios_vendor=${es smb.biosVendor}
-    EXPECTED_bios_version=${es smb.biosVersion}
-    EXPECTED_bios_date=${es smb.biosDate}
-    EXPECTED_sys_vendor=${es smb.systemManufacturer}
-    EXPECTED_product_name=${es smb.systemProduct}
-    EXPECTED_product_version=${es smb.systemVersion}
-    EXPECTED_product_serial=${es smb.systemSerial}
-    EXPECTED_product_uuid=${es domainUuid}
-    EXPECTED_product_family=${es smb.systemFamily}
-    EXPECTED_product_sku=${es smb.systemSku}
-    EXPECTED_board_vendor=${es smb.boardManufacturer}
-    EXPECTED_board_name=${es smb.boardProduct}
-    EXPECTED_board_version=${es smb.boardVersion}
-    EXPECTED_board_serial=${es smb.boardSerial}
-    EXPECTED_chassis_vendor=${es smb.chassisManufacturer}
-    EXPECTED_chassis_version=${es smb.chassisVersion}
-    EXPECTED_chassis_serial=${es smb.chassisSerial}
-    EXPECTED_chassis_asset_tag=${es smb.chassisAsset}
-    EXPECTED_nic_mac=${es expectedMac}
-    EXPECTED_cpu_hypervisor_present=0
-  '';
-
-  # ── Minimal NixOS guest (BIOS-bootable qcow2) ────────────────────────────
-  # Built via make-disk-image.nix — the same machinery the NixOS test framework
-  # uses for its own per-node disk images. BIOS boot (image.efiSupport = false)
-  # to match the fixture's firmware = "bios". The guest boots under libvirt,
-  # runs guestProbe, writes output to the raw results disk, then powers off.
-  guestEval = import "${pkgs.path}/nixos/lib/eval-config.nix" {
-    system = "x86_64-linux";
-    modules = [
-      "${pkgs.path}/nixos/modules/virtualisation/disk-image.nix"
-      {
-        image.baseName = "adon";
-        image.format = "qcow2";
-        image.efiSupport = false;  # BIOS — matches fixture firmware="bios"
-        virtualisation.diskSize = "auto";  # calculated from closure + 512M slack
-
-        environment.systemPackages = with pkgs; [
-          dmidecode pciutils iproute2 util-linux
-        ];
-
-        # Silence getty spam on serial/console — we transport results via a
-        # raw disk, not serial, and spam would clutter the results disk if the
-        # probe wrote to a tty instead.
-        systemd.services."serial-getty@ttyS0".enable = false;
-        systemd.services."getty@tty1".enable = false;
-        systemd.services."autovt@".enable = false;
-
-        # The probe service: runs after multi-user.target, writes the probe
-        # output to the raw results disk, syncs, powers off. The results disk
-        # is the second SATA disk (AD-on forces SATA bus: sda=boot, sdb=results).
-        # We try /dev/sdb first, fall back to /dev/vdb in case bus assignment
-        # differs on a future libvirt/qemu.
-        systemd.services.adon-probe = {
-          wantedBy = [ "multi-user.target" ];
-          after = [ "multi-user.target" ];
-          serviceConfig = {
-            Type = "oneshot";
-            RemainAfterExit = true;
-          };
-          path = with pkgs; [ dmidecode pciutils iproute2 util-linux ];
-          script = ''
-            RESULTS_DEV=""
-            for dev in /dev/sdb /dev/vdb; do
-              if [ -b "$dev" ]; then RESULTS_DEV="$dev"; break; fi
-            done
-            if [ -z "$RESULTS_DEV" ]; then
-              echo "FAIL: no results disk found (tried /dev/sdb /dev/vdb)" >&2
-              poweroff
-            fi
-            ${guestProbe} > "$RESULTS_DEV"
-            sync
-            poweroff
-          '';
-        };
-      }
-    ];
-  };
-
-  guestImage = guestEval.config.system.build.image;
-
-  # ── The test VM (libvirtd host with nested KVM) ──────────────────────────
-  test = pkgs.testers.runNixOSTest {
-    name = "anti-detection-guest-smbios-boot";
-    nodes.machine = { pkgs, lib, ... }: {
-      # Nested KVM needs enough cores + memory for the inner guest. The AD-on
-      # guest requests 1 vCPU / 1024 MiB; the test VM itself needs headroom.
-      virtualisation.cores = 2;
-      virtualisation.memorySize = 4096;
-      imports = [ common.kvmTestModule ];
-      environment.systemPackages = with pkgs; [ libvirt dmidecode ];
-    };
-    # The test driver script lives in a real .py file (avoids maintaining
-    # Python inside a Nix ''...'' string — no escaping issues, proper syntax
-    # highlighting). Nix store paths are injected via @PLACEHOLDER@ tokens.
-    testScript = let
-      guestImagePath = "${guestImage}/${guestEval.config.image.fileName}";
-    in replaceStrings
-      [ "@GUEST_IMAGE@" "@XML_FILE@" "@DIFF_HARNESS@" "@EXPECTED_VALUES@" ]
-      [ guestImagePath      "${xmlFile}"  "${diffHarness}" "${expectedValues}" ]
-      (readFile ./scripts/guest-smbios-boot-driver.py);
+  # ── Minimal NixOS guest image (BIOS-bootable qcow2) + test VM ────────────
+  # Both assembled by common.nix's reuse helpers. mkGuestImage builds the
+  # qcow2 (make-disk-image.nix, BIOS) with the adon-probe service that runs the
+  # probe script list → results disk → poweroff. mkBootTest wires the runNixOSTest:
+  # the libvirtd test VM (nested-KVM-sized, kvmTestModule) + the driver script
+  # that defines/starts the guest and runs the diff harness. No extraTestVMModules
+  # here — this is the UNPATCHED test (nixpkgs' prebuilt QEMU). The patched
+  # variant layers a patched-extras probe script + extraTestVMModules enabling
+  # antiDetection.patchQemu = true.
+  guestImage = mkGuestImage {
+    name = "adon";
+    probeScripts = [ baseProbe ];
   };
 in
-test
+mkBootTest {
+  name = "anti-detection-guest-smbios-boot";
+  inherit guestImage xmlFile diffHarness expectedValues;
+  driverScript = ./scripts/guest-smbios-boot-driver.py;
+}

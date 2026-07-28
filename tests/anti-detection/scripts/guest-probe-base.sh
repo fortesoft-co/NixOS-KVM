@@ -1,18 +1,22 @@
 #!/bin/sh
-# Guest-side probe script for guest-smbios-boot.nix (Option B).
+# Shared base probe — runs INSIDE any booted AD-on guest (Option B + the
+# patched-QEMU boot test + future RDTSC variant). Captures the first-party
+# fingerprint sources every boot test diffs against:
+#   - SMBIOS Types 0/1/2/3 via /sys/class/dmi/id (+ dmidecode for Type 0
+#     release + Type 11 OEM strings, which sysfs omits)
+#   - CPU hypervisor flag (/proc/cpuinfo) + model name (lscpu)
+#   - NIC (ip link — the e1000e interface + MAC)
+#   - PCI list (lspci — no VirtIO giveaway with e1000e)
+#   - ACPI table list + block device models (Tier 2 patch targets)
 #
-# Runs INSIDE the booted AD-on guest. Captures every first-party fingerprint
-# source a detection tool would read. Output is written to the raw results disk
-# (/dev/sdb) by the guest's adon-probe systemd service; the host reads it back
-# after the guest powers off. Markers delimit the payload so any pre-marker
-# kernel-boot noise on the disk is ignored by the host-side diff harness.
+# This script emits ONLY its `--- section ---` blocks. It does NOT emit the
+# ===PROBE-START/END=== markers — mkGuestImage's adon-probe service wraps the
+# concatenated output of ALL probe scripts (base + any extras) in a single
+# marker pair, so each test composes its probe as a list of scripts.
 #
-# This file is pure shell — no Nix interpolation. It is read via
-# pkgs.writeShellScript (readFile ./scripts/adon-guest-probe.sh) in
-# guest-smbios-boot.nix.
+# Pure shell — no Nix interpolation. Read via pkgs.writeShellScript (readFile)
+# in the test's .nix file.
 set -e
-
-echo "===PROBE-START==="
 
 # /sys/class/dmi/id — the kernel's SMBIOS decode. Covers Types 0/1/2/3.
 # Format: DMI:<filename>:<value> for unambiguous parsing on the host side.
@@ -54,5 +58,3 @@ echo "--- block-models ---"
 for d in /sys/block/*/device/model; do
   [ -r "$d" ] && printf 'BLOCK:%s:%s\n' "$(echo "$d" | sed 's|/device/model||')" "$(cat "$d")"
 done
-
-echo "===PROBE-END==="
