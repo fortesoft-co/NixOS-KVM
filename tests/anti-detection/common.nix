@@ -95,10 +95,9 @@ let
   mockConfig = mockConfigFor baseGuest;
 
   guestLib = import ../../modules/kvm/guests/lib.nix { config = mockConfig; inherit lib pkgs; };
-  hostLib  = import ../../modules/kvm/host/lib.nix  { config = mockConfig; inherit lib pkgs; };
-  inherit (guestLib) generateXML computeEffectiveSmbios macFor hexToInt;
-  inherit (hostLib) hostManufacturer;
-  allProfiles = import ../../modules/kvm/host/smbios-profiles.nix;
+  guestAd = import ../../modules/kvm/guests/anti-detection.nix { config = mockConfig; inherit lib pkgs; };
+  inherit (guestLib) generateXML macFor;
+  inherit (guestAd) computeEffectiveSmbios hexToInt smbiosProfiles;
 
   # ── Expected values, computed from the same libs the module uses ─────────
   # Replicate the deterministic hash derivations that generateXML computes
@@ -126,19 +125,7 @@ let
       p5 = substring 20 12 uuidHash;
     in "${p1}-${p2}-${p3}-${p4}-${p5}";
 
-  # Profile list the module would select (mirror guests/lib.nix L141-152).
-  validProfiles =
-    let m = allProfiles.${hostManufacturer.id} or {};
-        v = m.${cpuVendor} or {};
-    in v.${cpuSocket} or [];
-  fallbackProfile = {
-    manufacturerId = hostManufacturer.id;
-    manufacturer = hostManufacturer.smbiosManufacturer;
-    product = hostManufacturer.defaultProduct;
-    version = "1.0"; family = "Default System"; socket = cpuSocket;
-    chipset = "Unknown"; cpuVendor = cpuVendor; biosVersion = "1.0.0";
-  };
-  smbiosProfiles = if validProfiles != [] then validProfiles else [ fallbackProfile ];
+  # Profile list the module would select — from the AD module (no duplication).
 
   smb = computeEffectiveSmbios {
     guest = baseGuest;
@@ -179,12 +166,11 @@ in {
   # calling generateXML)
   inherit baseGuest mockConfigFor;
   # Module libs (so each test can compute its own generatedXML)
-  inherit generateXML computeEffectiveSmbios macFor hexToInt hostManufacturer allProfiles;
+  inherit generateXML computeEffectiveSmbios macFor hexToInt smbiosProfiles;
   # Hash derivations (exposed for debugging / future tests)
   inherit uuidHash serialHash baseSerialHash profileHash;
   # Computed expected values — what both probes diff against
   inherit syntheticSerial baseboardSerial domainUuid;
-  inherit validProfiles fallbackProfile smbiosProfiles;
   inherit smb expectedMac hvVendorId;
   inherit es;
   # Shared NixOS module for the test VM (both Layer 3 tests use this via

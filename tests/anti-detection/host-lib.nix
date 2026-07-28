@@ -30,7 +30,9 @@ let
     };
   };
   hostLib = import ../../modules/kvm/host/lib.nix { inherit config lib pkgs; };
-  inherit (hostLib) hexToInt detectSocket detectSocketFromDatabase cpuVendor hostManufacturer manufacturersForSocket;
+  hostAd = import ../../modules/kvm/host/anti-detection.nix { inherit config lib pkgs; };
+  inherit (hostLib) hexToInt detectSocket detectSocketFromDatabase cpuVendor;
+  inherit (hostAd) hostManufacturer manufacturersForSocket;
 
   # ── Each check returns null (pass) or a string (failure detail) ──────────
 

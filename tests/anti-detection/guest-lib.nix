@@ -36,10 +36,11 @@ let
     };
   };
   guestLib = import ../../modules/kvm/guests/lib.nix { inherit config lib pkgs; };
-  inherit (guestLib) macFor computeEffectiveSmbios hexToInt;
+  guestAd = import ../../modules/kvm/guests/anti-detection.nix { inherit config lib pkgs; };
+  inherit (guestLib) macFor;
+  inherit (guestAd) computeEffectiveSmbios hexToInt;
   # nicOui (lowercased) is what macFor uses when AD is on.
-  hostLib = import ../../modules/kvm/host/lib.nix { inherit config lib pkgs; };
-  expectedOui = lib.toLower hostLib.nicOui;
+  expectedOui = lib.toLower guestAd.nicOui;
 
   # ── Mock deps for computeEffectiveSmbios ─────────────────────────────────
   mockSyntheticSerial = "SYNTHETIC-SERIAL-MOCK";

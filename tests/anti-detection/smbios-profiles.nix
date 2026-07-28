@@ -36,8 +36,8 @@ let
       antiDetection = { patchQemu = false; patchKernel = false; };
     };
   };
-  hostLib = import ../../modules/kvm/host/lib.nix { inherit config lib pkgs; };
-  inherit (hostLib) manufacturers selectManufacturer selectManufacturerForSocket manufacturersForSocket;
+  hostAd = import ../../modules/kvm/host/anti-detection.nix { inherit config lib pkgs; };
+  inherit (hostAd) manufacturers selectManufacturer selectManufacturerForSocket manufacturersForSocket;
   smbiosProfiles = import ../../modules/kvm/host/smbios-profiles.nix;
 
   testSeed = "test-seed-1234";

@@ -101,8 +101,8 @@ in
     (mkIf cfg.host.antiDetection.patchQemu {
       virtualisation.libvirtd.qemu.package = pkgs.qemu.overrideAttrs (old: 
         let
-          hostLib = import ./lib.nix { inherit config lib pkgs; };
-          manufacturer = hostLib.hostManufacturer;
+          hostAd = import ./anti-detection.nix { inherit config lib pkgs; };
+          manufacturer = hostAd.hostManufacturer;
           
           # Dynamically rewrite the ASUS patch strings to match the selected manufacturer
           dynamicPatch = pkgs.runCommand "qemu-anti-detection-dynamic.patch" {} ''
