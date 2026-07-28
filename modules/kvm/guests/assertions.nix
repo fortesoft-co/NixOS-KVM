@@ -274,7 +274,8 @@ in
                     Guest ${name}: smbiosMode is "synthetic" but one or more network
                     interfaces have a manually set MAC address. In synthetic mode,
                     the MAC is procedurally derived from your hwidSeed/hwidSalt using
-                    the selected manufacturer's real OUI prefix — manual overrides
+                    the NIC vendor's real OUI prefix (Intel, matching the
+                    emulated e1000e NIC) — manual overrides
                     are not permitted. Either:
                       1. Remove the networks.*.mac overrides, or
                       2. Set antiDetection.smbiosMode = "manual".

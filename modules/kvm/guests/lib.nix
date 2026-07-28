@@ -86,9 +86,9 @@ let
     result.disks;
 
   # Deterministically generates a MAC address for a guest's network interface.
-  # Uses the real OUI prefix of the host's selected motherboard manufacturer
-  # (not the QEMU 52:54:00 prefix, which is a trivially detectable VM signature).
-  # The last 3 bytes are derived from a per-interface hash so the MAC is:
+  # Uses the NIC vendor's OUI prefix (Intel, since the emulated NIC is always
+  # e1000e when AD is on). The last 3 bytes are derived from a per-interface
+  # hash so the MAC is:
   #   - deterministic (survives rebuilds)
   #   - unique per guest/interface
   #   - consistent with the SMBIOS manufacturer (NIC and board from same vendor)
@@ -101,11 +101,10 @@ let
       guest = cfg.guests.${name};
       seedPrefix = cfg.host.hwidSeed;
       h = builtins.hashString "sha256" "${seedPrefix}-${guest.hwidSalt}-mac-${toString i}";
-      # Use the real manufacturer OUI when anti-detection is active so the NIC
-      # matches the SMBIOS manufacturer. Fall back to the standard QEMU prefix
-      # when anti-detection is off (normal VM behavior).
+      # Use the NIC vendor's OUI (Intel for e1000e) when anti-detection is
+      # active. Fall back to the standard QEMU prefix when anti-detection is off.
       prefix =
-        if guest.antiDetection.enable then lib.toLower hostLib.hostManufacturer.oui else "52:54:00";
+        if guest.antiDetection.enable then lib.toLower hostLib.nicOui else "52:54:00";
     in
     if net.mac != null then
       net.mac

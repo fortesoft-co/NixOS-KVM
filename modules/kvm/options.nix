@@ -882,10 +882,9 @@ let
                     MAC address. When null, a deterministic MAC is derived
                     from the guest's hwidSalt and interface index.
 
-                    When antiDetection.enable is true, the MAC uses the real
-                    OUI prefix of the host's selected motherboard manufacturer
-                    (so the NIC appears to be made by the same vendor as the
-                    motherboard). When antiDetection is off, the standard QEMU
+                    When antiDetection.enable is true, the MAC uses the
+                    NIC vendor's OUI prefix (Intel, since the emulated NIC is
+                    always e1000e). When antiDetection is off, the standard QEMU
                     `52:54:00` prefix is used.
 
                     Pinning the MAC keeps it stable across rebuilds so DHCP

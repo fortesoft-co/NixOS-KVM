@@ -267,9 +267,8 @@ let
         patchToken = "ASUS";
         defaultProduct = "M4A88TD-M";
         realMachine = "ASUS Real Machine";
-        # Real OUI registered to ASUSTek Computer Inc. (IEEE OUI registry)
-        # Used as the first 3 bytes of generated MAC addresses so the NIC
-        # appears to be made by the same manufacturer as the motherboard.
+        # Real OUI registered to ASUSTek Computer Inc. (IEEE OUI registry).
+        # Board vendor OUI — kept for reference/validation.
         oui = "04:D9:F5";
       }
       {
@@ -279,6 +278,7 @@ let
         defaultProduct = "MS-7C37";
         realMachine = "MSI Real Machine";
         # Real OUI registered to Micro-Star International Co., Ltd.
+        # Board vendor OUI (see ASUS entry for rationale).
         oui = "00:01:6C";
       }
       {
@@ -288,6 +288,7 @@ let
         defaultProduct = "X570 AORUS ELITE";
         realMachine = "Gigabyte Real Machine";
         # Real OUI registered to Gigabyte Technology Co., Ltd.
+        # Board vendor OUI (see ASUS entry for rationale).
         oui = "00:13:20";
       }
       {
@@ -297,9 +298,17 @@ let
         defaultProduct = "X570 Taichi";
         realMachine = "ASRock Real Machine";
         # Real OUI registered to ASRock Inc.
+        # Board vendor OUI (see ASUS entry for rationale).
         oui = "00:13:74";
       }
     ];
+
+  # NIC vendor OUI — used for MAC address generation when antiDetection is on.
+  # The emulated NIC is always e1000e (Intel 82574L) when AD is on, so the MAC
+  # uses Intel's OUI. On real hardware, the MAC is assigned by the NIC chip
+  # vendor (Intel), so an ASUS board with an Intel NIC has an Intel OUI MAC +
+  # ASUS SMBIOS.
+  nicOui = "00:1B:21";  # Intel Corporation (IEEE OUI registry)
 
   # Deterministically select one manufacturer for the entire host.
   #
@@ -365,11 +374,10 @@ let
       in
       elemAt eligible idx;
 
-  # The single host-level manufacturer used by EVERY consumer — the QEMU patch
-  # (host/libvirtd.nix), the MAC OUI prefix (guests/lib.nix macFor), and the
-  # SMBIOS profile selection (guests/lib.nix) — so the brand is consistent
-  # across all three. Socket-aware: constrained to vendors with a profile for
-  # the host's socket.
+  # The single host-level manufacturer used by the QEMU patch (host/libvirtd.nix)
+  # and the SMBIOS profile selection (guests/lib.nix) — so the brand is consistent
+  # across those surfaces. The MAC OUI is separate (nicOui, above). Socket-aware:
+  # constrained to vendors with a profile for the host's socket.
   #
   # NOTE: this forces cpuVendor/cpuSocket. When cpuSocket = "auto" it runs
   # cpuid_tool during eval, which reads the BUILD machine's CPU — so for
@@ -378,5 +386,5 @@ let
   hostManufacturer = selectManufacturerForSocket cfg.host.hwidSeed cpuVendor cpuSocket;
 in
 {
-  inherit hexToInt cpuVendor cpuSocket detectSocket detectSocketFromDatabase manufacturers selectManufacturer selectManufacturerForSocket manufacturersForSocket hostManufacturer;
+  inherit hexToInt cpuVendor cpuSocket detectSocket detectSocketFromDatabase manufacturers selectManufacturer selectManufacturerForSocket manufacturersForSocket hostManufacturer nicOui;
 }

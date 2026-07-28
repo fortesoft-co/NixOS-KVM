@@ -18,8 +18,8 @@ with lib;
 let
   checkLib = import ./check-lib.nix { inherit lib; };
   # Mock config. Explicit cpuVendor/cpuSocket (no IFD). macFor reads
-  # cfg.guests.${name}, cfg.host.hwidSeed, and hostManufacturer.oui (which
-  # resolves via cpuVendor/cpuSocket/hwidSeed — all explicit here, no IFD).
+  # cfg.guests.${name}, cfg.host.hwidSeed, and nicOui (which is a constant
+  # — no IFD).
   config = {
     cfg.kvm = {
       host = {
@@ -37,9 +37,9 @@ let
   };
   guestLib = import ../../modules/kvm/guests/lib.nix { inherit config lib pkgs; };
   inherit (guestLib) macFor computeEffectiveSmbios hexToInt;
-  # hostManufacturer's OUI (lowercased) is what macFor uses when AD is on.
+  # nicOui (lowercased) is what macFor uses when AD is on.
   hostLib = import ../../modules/kvm/host/lib.nix { inherit config lib pkgs; };
-  expectedOui = lib.toLower hostLib.hostManufacturer.oui;
+  expectedOui = lib.toLower hostLib.nicOui;
 
   # ── Mock deps for computeEffectiveSmbios ─────────────────────────────────
   mockSyntheticSerial = "SYNTHETIC-SERIAL-MOCK";
@@ -141,7 +141,7 @@ let
       macExplicit = macFor "adOn" { mac = "aa:bb:cc:dd:ee:ff"; } 0;
       macOnRepeat = macFor "adOn" { mac = null; } 0;
       problems = filter (x: x != null) [
-        (if hasPrefix expectedOui macOn then null else "adOn MAC '${macOn}' should start with OUI '${expectedOui}'")
+        (if hasPrefix expectedOui macOn then null else "adOn MAC '${macOn}' should start with NIC vendor OUI '${expectedOui}'")
         (if hasPrefix "52:54:00" macOff then null else "adOff MAC '${macOff}' should start with 52:54:00")
         (if macOn == macOnRepeat then null else "macFor not deterministic: '${macOn}' vs '${macOnRepeat}'")
         (if macOn != macOn1 then null else "macFor not unique per interface: i=0 and i=1 both '${macOn}'")
