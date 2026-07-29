@@ -133,6 +133,16 @@
         anti-detection-kernel-compile = kernelPatch.compile;
         anti-detection-kernel = kernelPatch.all;
 
+        # Layer 3 PATCHED-KERNEL boot test (heavy — boots a nested test VM
+        # running the pinned + patched kernel, then boots the AD-on guest
+        # inside it; needs nested KVM to RUN). Reuses the Layer 2 combined
+        # kernel build (same derivation — not rebuilt). Verifies the patch
+        # set's runtime surfaces from inside the guest: CPUID 0x40000000
+        # signature + user-mode TSC divisor ratio, plus the shared 20-field
+        # SMBIOS/NIC/CPU regression. See tests/anti-detection/kernel-boot.nix.
+        anti-detection-kernel-boot =
+          import ./tests/anti-detection/kernel-boot.nix { inherit (pkgs) lib; inherit pkgs; };
+
         # Layer 3 PATCHED-QEMU boot test (VERY heavy — builds patched QEMU from
         # source on the test VM, then boots a guest under it; needs nested KVM
         # to RUN). Verifies the QEMU string replacements surface in a booted
