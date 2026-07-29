@@ -47,7 +47,8 @@ let
   common = import ./common.nix { inherit lib pkgs; };
   inherit (common)
     baseGuest generateXML
-    mkGuestImage mkBootTest mkExpectedValues mkDiffHarness;
+    mkGuestImage mkBootTest mkExpectedValues mkDiffHarness
+    kernelProbeExpected es;
 
   # Same AD-on guest fixture as Option B — the ONLY difference is the test VM
   # runs the patched kernel. The guest XML is identical (the patch is a
@@ -98,9 +99,9 @@ let
   expectedValues = mkExpectedValues {
     name = "kernel-boot";
     extraLines = ''
-      EXPECTED_kernel_cpuid_signature=GenuineIntel
-      EXPECTED_kernel_tsc_ratio_min=5
-      EXPECTED_kernel_tsc_ratio_max=12
+      EXPECTED_kernel_cpuid_signature=${es kernelProbeExpected.cpuid_signature}
+      EXPECTED_kernel_tsc_ratio_min=${toString kernelProbeExpected.tsc_ratio_min}
+      EXPECTED_kernel_tsc_ratio_max=${toString kernelProbeExpected.tsc_ratio_max}
     '';
   };
 

@@ -143,6 +143,16 @@
         anti-detection-kernel-boot =
           import ./tests/anti-detection/kernel-boot.nix { inherit (pkgs) lib; inherit pkgs; };
 
+        # Layer 3 PATCHED-HOST runtime test (non-nested). Boots a test VM on
+        # the HOST's KVM (stock kernel, no nested guest) and probes CPUID
+        # signature + TSC ratio + TF+DR0 trap fix + hypercall #UD fix directly.
+        # Requires the BUILD HOST to be running the patched kernel + have KVM.
+        # Self-validating: fails loudly on an unpatched host. NOT in `checks` —
+        # opt-in via patchBuilds:
+        #   nix build .#patchBuilds.x86_64-linux.anti-detection-kernel-host --no-link -L
+        anti-detection-kernel-host =
+          import ./tests/anti-detection/kernel-host.nix { inherit (pkgs) lib; inherit pkgs; };
+
         # Layer 3 PATCHED-QEMU boot test (VERY heavy — builds patched QEMU from
         # source on the test VM, then boots a guest under it; needs nested KVM
         # to RUN). Verifies the QEMU string replacements surface in a booted

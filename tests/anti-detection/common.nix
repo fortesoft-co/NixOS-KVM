@@ -372,4 +372,20 @@ in {
   # Shared NixOS module for the test VM (both Layer 3 tests use this via
   # `imports = [ common.kvmTestModule ]` in their nodes.machine config).
   inherit kvmTestModule;
+
+  # ── Kernel-patch probe shared expected values ──────────────────────────────
+  # Consumed by BOTH the nested boot test (kernel-boot.nix, written to the
+  # expected-values file for the shell diff harness) and the non-nested
+  # host test (kernel-host.nix, interpolated into the Python testScript).
+  # Single source of truth — neither test hardcodes these.
+  kernelProbeExpected = {
+    cpuid_signature = "GenuineIntel";
+    tsc_ratio_min = 5;
+    tsc_ratio_max = 12;
+    # Non-nested-only (trap fix + #UD fix) — the nested test does NOT assert
+    # these (see kernel-host.nix for why they're non-nested-only).
+    trap_dr6_bs = 1;   # BS bit (bit 14) must be set
+    trap_dr6_b0 = 1;   # B0 bit (bit 0) must be set — dropped by unpatched KVM
+    ud_signal = "SIGILL"; # #UD injected by patched host; unpatched = SIGSEGV (#PF)
+  };
 }
