@@ -209,7 +209,7 @@ index 5c0bcd5f8..1e54f6df3 100644
      if (pcmc->smbios_defaults) {
          /* These values are guest ABI, do not change */
 -        smbios_set_defaults("QEMU", mc->desc, mc->name);
-+        smbios_set_defaults("ASUS", "M4A88TD-M", "ASUS-PC");
++        smbios_set_defaults("ASUS", "To Be Filled By O.E.M.", "ASUS-PC");
      }
  
      /* tell smbios about cpuid version and features */

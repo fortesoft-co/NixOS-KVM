@@ -29,6 +29,17 @@ in
           cfg.host.antiDetection.patchQemu
           || cfg.host.antiDetection.patchKernel
           || lib.any (g: g.antiDetection.enable) (builtins.attrValues cfg.guests);
+
+        # Whether any enabled guest runs AD in synthetic mode — the only mode that
+        # requires a matching motherboard profile from the curated library.
+        anySyntheticAdGuest =
+          lib.any (g: g.enable && g.antiDetection.enable && g.antiDetection.smbiosMode == "synthetic")
+            (builtins.attrValues cfg.guests);
+
+        # Guest AD module — gives hasValidProfile (profile-library coverage for
+        # the host's selected manufacturer + CPU vendor + socket) and
+        # hostManufacturer, for the no-profile assertion below.
+        guestAd = import ./anti-detection.nix { inherit config lib pkgs; };
       in
       [
         {
@@ -68,6 +79,42 @@ in
               To identify your CPU, run:
                 nix-shell -p libcpuid --run "cpuid_tool --codename"
               or check your motherboard manual for the socket type.
+            '';
+          }
+        ])
+      ++
+        # Synthetic AD — fail (do NOT silently fall back) when no motherboard
+        # profile matches the host's (manufacturer, CPU vendor, socket). Without
+        # this, a synthetic guest would silently get a generic placeholder board
+        # while the user believes they're getting a curated, socket-matched one.
+        # hasValidProfile is host-level (depends on the seed-selected manufacturer
+        # + CPU, not per-guest hwidSalt), so one assertion covers all synthetic
+        # guests on the host. Only gated when a synthetic AD-on guest exists.
+        (optionals anySyntheticAdGuest [
+          {
+            assertion = guestAd.hasValidProfile;
+            message = ''
+              Anti-detection synthetic mode requires a motherboard profile for the
+              host's CPU in the curated profile library
+              (modules/kvm/host/smbios-profiles.nix), but none was found for:
+                manufacturer = ${guestAd.hostManufacturer.smbiosManufacturer}
+                              (seed-selected from cfg.kvm.host.hwidSeed)
+                CPU vendor   = ${hostLib.cpuVendor}
+                CPU socket   = ${hostLib.cpuSocket}
+
+              The library has no entry for this (manufacturer, CPU vendor, socket)
+              combination across any of the four supported brands, so synthetic
+              mode cannot produce a plausible, socket-matched board. It will NOT
+              silently fall back to a generic board — that would present an
+              implausible/wrong-socket identity to fingerprinting tools.
+
+              To fix this, either:
+                1. Add matching profiles to the library (run
+                   scripts/sync-motherboard-db.py with a linuxhw/DMI dump for this
+                   socket), or
+                2. Set antiDetection.smbiosMode = "manual" on the synthetic guest(s)
+                   and provide full smbios hardware fields, or
+                3. Disable antiDetection on the affected guest(s).
             '';
           }
         ])

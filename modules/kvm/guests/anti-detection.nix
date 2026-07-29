@@ -23,7 +23,7 @@ let
   fallbackProfile = {
     manufacturerId = hostManufacturer.id;
     manufacturer = hostManufacturer.smbiosManufacturer;
-    product = hostManufacturer.defaultProduct;
+    product = "To Be Filled By O.E.M.";
     version = "1.0";
     family = "Default System";
     socket = if cpuSocket != null then cpuSocket else "Unknown";
@@ -41,8 +41,16 @@ let
     in
     s;
 
+  # Whether the curated library has at least one profile for the host's
+  # (manufacturer, CPU vendor, socket). Consumed by guests/assertions.nix to
+  # fail the build (not silently fall back) when synthetic mode has no match.
+  hasValidProfile = length validProfiles > 0;
+
   # If we successfully parsed matching profiles from the database, use them.
-  # Otherwise, fall back to the safe defaults from the manufacturer struct.
+  # Otherwise, fall back to the generic placeholder profile. This `else` branch
+  # is UNREACHABLE in synthetic mode: guests/assertions.nix fails the build when
+  # hasValidProfile is false, so the user never silently gets a generic board.
+  # fallbackProfile is retained as a defensive last-resort (see above).
   smbiosProfiles = if length validProfiles > 0 then validProfiles else [ fallbackProfile ];
 
   # ───────── Serial generation ─────────
@@ -250,6 +258,7 @@ in
   inherit
     computeEffectiveSmbios
     smbiosProfiles
+    hasValidProfile
     hostManufacturer
     nicOui
     hexToInt

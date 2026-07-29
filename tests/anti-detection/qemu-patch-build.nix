@@ -3,9 +3,12 @@
 # Verifies that the dynamic manufacturer-token rewrite in
 # modules/kvm/host/libvirtd.nix (the `runCommand` + `sed` that swaps the ASUS
 # placeholders in patches/qemu-10.2.2-anti-detection.patch for a selected
-# manufacturer's patchToken / realMachine / defaultProduct) produces a VALID
+# manufacturer's patchToken / realMachine) produces a VALID
 # patch for ALL FOUR manufacturer tokens (ASUS / MSIC / GBTC / ASRK), not just
-# the default.
+# the default. (The smbios_set_defaults product is a HARD-CODED generic string
+# in the patch — "To Be Filled By O.E.M." — not sed-substituted: AD -smbios
+# overrides it field-by-field for AD-on guests, verified unobservable by the
+# patched boot test, so socket-matching it was pointless.)
 #
 # Two levels of "valid", each catching a different failure mode:
 #
@@ -53,9 +56,9 @@ let
   # the boot tests run — one seed value in one place, no drift, no separate
   # recompile for a different manufacturer. common.nix's seed selects gigabyte
   # (GBTC, a NON-template token) so the static binary check below catches a
-  # broken sed: for a non-template token the present check for
-  # `<m.defaultProduct>` (e.g. X570 AORUS ELITE) would fail if the sed no-op'd
-  # (leaving the ASUS template M4A88TD-M).
+  # broken sed: for a non-template token the present checks for the token-
+  # substituted strings (`${m.patchToken}0002`, `${m.patchToken}-PC`, ...) would
+  # fail if the sed no-op'd (leaving the ASUS template values).
   common = import ./common.nix { inherit lib pkgs; };
   hostAd = import ../../modules/kvm/host/anti-detection.nix {
     config = {
@@ -133,17 +136,19 @@ let
   # ── Level 3: static binary string check (the compiled artifact) ──────────
   # Runs `strings` (binutils) on the compiled patched qemu-system-x86_64 ELF and
   # verifies the sed did what we asked: the SELECTED manufacturer's strings are
-  # present (parameterized on `m` — `<m.patchToken>0002`, `<m.defaultProduct>`,
-  # `<m.patchToken>-PC`, …) AND the QEMU defaults the patch replaces are gone
+  # present (parameterized on `m` — `<m.patchToken>0002`, `<m.patchToken>-PC`,
+  # `<m.patchToken> DVD-ROM`, …) AND the QEMU defaults the patch replaces are gone
   # (`QEMU0002`, `QEMU HARDDISK`, `KVMKVMKVM`, … — robust for every manufacturer,
   # since the patch template always replaces QEMU defaults regardless of token).
   #
   # Covers ALL string replacements — including ones that DON'T surface at
   # runtime (USB HID names, PS/2 names, drive serial, the smbios_set_defaults
-  # product, etc.). The runtime boot test only sees surfaces that reach the
-  # guest. Numeric changes (virtio vendor ID 0x1af4→0x8086, EDID model_nr) aren't
-  # string-greppable; the string half is covered here, the runtime OEM-ID check
-  # covers the ACPI constant.
+  # version, etc.). The smbios_set_defaults PRODUCT is a hard-coded generic
+  # ("To Be Filled By O.E.M.") and is NOT asserted here — it isn't sed-
+  # substituted, and AD -smbios overrides it for AD-on guests anyway. The runtime
+  # boot test only sees surfaces that reach the guest. Numeric changes (virtio
+  # vendor ID 0x1af4→0x8086, EDID model_nr) aren't string-greppable; the string
+  # half is covered here, the runtime OEM-ID check covers the ACPI constant.
   #
   # Uses strings(1) (not grep -aF on the raw ELF): grepping a 32MB binary directly
   # matches code-section byte sequences (false matches) and is slow; strings
@@ -164,7 +169,6 @@ let
     # --- token-substituted (sed ran with the selected manufacturer's token) ---
     assertPresent "${m.patchToken}0002"            # fw_cfg ACPI _HID
     assertPresent "${m.patchToken}-PC"             # smbios_set_defaults version
-    assertPresent "${m.defaultProduct}"            # smbios_set_defaults product
     assertPresent "${m.patchToken} DVD-ROM"        # IDE CD model
     assertPresent "${m.patchToken} MICRODRIVE"     # IDE CF model
     assertPresent "${m.patchToken}%05d"            # IDE drive serial

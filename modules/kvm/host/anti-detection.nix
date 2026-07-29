@@ -23,7 +23,6 @@ let
   #   - smbiosManufacturer: full SMBIOS manufacturer string (step 5 profile filter)
   #   - patchToken: 4-char token for QEMU source patches — ACPI HID "XXXX0002"
   #     and per-device strings like "ASUS Keyboard" (step 7 dynamic sed)
-  #   - defaultProduct: legacy QEMU x86 fallback product (step 7)
   #   - realMachine: replaces "QEMU Virtual Machine" / "KVM Virtual Machine"
   #     in QEMU source (step 7)
   manufacturers = [
@@ -31,7 +30,6 @@ let
         id = "asus";
         smbiosManufacturer = "ASUSTeK COMPUTER INC.";
         patchToken = "ASUS";
-        defaultProduct = "M4A88TD-M";
         realMachine = "ASUS Real Machine";
         # Real OUI registered to ASUSTek Computer Inc. (IEEE OUI registry).
         # Board vendor OUI — kept for reference/validation.
@@ -41,7 +39,6 @@ let
         id = "msi";
         smbiosManufacturer = "Micro-Star International Co., Ltd.";
         patchToken = "MSIC";
-        defaultProduct = "MS-7C37";
         realMachine = "MSI Real Machine";
         # Real OUI registered to Micro-Star International Co., Ltd.
         # Board vendor OUI (see ASUS entry for rationale).
@@ -51,7 +48,6 @@ let
         id = "gigabyte";
         smbiosManufacturer = "Gigabyte Technology Co., Ltd.";
         patchToken = "GBTC";
-        defaultProduct = "X570 AORUS ELITE";
         realMachine = "Gigabyte Real Machine";
         # Real OUI registered to Gigabyte Technology Co., Ltd.
         # Board vendor OUI (see ASUS entry for rationale).
@@ -61,7 +57,6 @@ let
         id = "asrock";
         smbiosManufacturer = "ASRock";
         patchToken = "ASRK";
-        defaultProduct = "X570 Taichi";
         realMachine = "ASRock Real Machine";
         # Real OUI registered to ASRock Inc.
         # Board vendor OUI (see ASUS entry for rationale).
@@ -144,15 +139,23 @@ let
   # ───────── Dynamic QEMU patch adaptation ─────────
   # The single source of truth for the sed recipe that adapts the ASUS-template
   # QEMU patch (patches/qemu-10.2.2-anti-detection.patch) to a given manufacturer
-  # record: swaps the ASUS placeholders for the record's realMachine /
-  # defaultProduct / patchToken. Used by host/libvirtd.nix (with hostManufacturer)
-  # AND by the patch-build tests (tests/anti-detection/qemu-patch-build.nix, with
-  # each manufacturer) so the test exercises the EXACT production sed — no replica
-  # that could drift. Returns a store-path patch file.
+  # record: swaps the ASUS placeholders for the record's realMachine / patchToken.
+  # Used by host/libvirtd.nix (with hostManufacturer) AND by the patch-build tests
+  # (tests/anti-detection/qemu-patch-build.nix, with each manufacturer) so the
+  # test exercises the EXACT production sed — no replica that could drift.
+  # Returns a store-path patch file.
+  #
+  # NOTE: the smbios_set_defaults *product* (the 2nd arg, formerly the per-
+  # manufacturer `defaultProduct`) is now a HARD-CODED generic string in the patch
+  # ("To Be Filled By O.E.M.") and is NOT sed-substituted. Rationale: that value
+  # is the QEMU-internal Type 1 fallback, which AD `-smbios` overrides field-by-
+  # field for AD-on guests (verified unobservable by the patched boot test), so
+  # socket-matching it was pointless. Only the manufacturer (ASUS→token) and
+  # version (ASUS-PC→token-PC) are token-substituted — those carry the host-level
+  # manufacturer identity, which IS consistent across guests.
   mkDynamicPatch = m: pkgs.runCommand "qemu-anti-detection-${m.id}.patch" {} ''
     sed \
       -e 's/ASUS Real Machine/${m.realMachine}/g' \
-      -e 's/M4A88TD-M/${m.defaultProduct}/g' \
       -e 's/ASUS-PC/${m.patchToken}-PC/g' \
       -e 's/ASUS/${m.patchToken}/g' \
       ${../patches/qemu-10.2.2-anti-detection.patch} > $out
