@@ -1628,10 +1628,16 @@ in
             type = types.bool;
             default = false;
             description = ''
-              Applies a KVM RDTSC (Time-Stamp Counter) spoofing patch to the host Linux kernel.
-              This defeats hyper-aggressive anti-cheats (like Vanguard) that use timing attacks to detect VM-Exits.
+              Applies the vendored anti-detection kernel patch set: RDTSC/RDTSCP timing
+              spoof (with runtime tunables under /sys/module/kvm_intel/parameters/),
+              MSR_IA32_TSC read gate, CPUID hypervisor-signature spoof, TF+DR0
+              debug-trap fix, and hypercall #UD fix. This defeats hyper-aggressive
+              anti-cheats (like Vanguard) that use timing attacks and CPU behavior
+              checks to detect VMs.
 
-              This currently pins your kernel to Linux 6.1 LTS to ensure the default patch applies.
+              This pins your kernel to the exact Linux version the patches were
+              generated against (currently 6.18.38, hash-verified fetch) to ensure
+              they apply — nixpkgs kernel bumps will not drift the version.
 
               WARNING: This forces your host to compile the entire Linux kernel from source (takes 30-90+ minutes).
             '';
@@ -1639,7 +1645,7 @@ in
           customKernelPatch = mkOption {
             type = types.nullOr types.path;
             default = null;
-            description = "Optional path to a custom KVM RDTSC patch file to override the vendored default.";
+            description = "Optional path to a custom kernel patch file. When set, it REPLACES the entire vendored anti-detection patch set (escape hatch).";
           };
           customKernelSrcUrl = mkOption {
             type = types.nullOr types.str;

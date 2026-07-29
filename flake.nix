@@ -107,6 +107,7 @@
       # tests/anti-detection/qemu-patch-build.nix for the two-level rationale.
       patchBuilds.x86_64-linux = let
         qemuPatch = import ./tests/anti-detection/qemu-patch-build.nix { inherit (pkgs) lib; inherit pkgs; };
+        kernelPatch = import ./tests/anti-detection/kernel-patch-build.nix { inherit (pkgs) lib; inherit pkgs; };
       in {
         # Cheap half only — all four token patches apply cleanly to QEMU 10.2.2
         # source (no from-source compile). Fast enough to run interactively.
@@ -121,6 +122,17 @@
         # Convenience: build everything (applies + compile + static string check).
         anti-detection-qemu = qemuPatch.all;
 
+        # Layer 2 Tier 3 (Kernel anti-detection) — verifies the five vendored
+        # per-vector patches (modules/kvm/patches/linux-6.18-ad-*.patch) each
+        # apply cleanly to the pinned Linux 6.18.38 source AND all five apply
+        # + compile together. Cheap apply matrix + ONE heavy full-kernel build.
+        # See tests/anti-detection/kernel-patch-build.nix.
+        # Maximize parallelism on the compile (no hard-coded -j) with:
+        #   nix build .#patchBuilds.x86_64-linux.anti-detection-kernel --cores 0 -L
+        anti-detection-kernel-applies = kernelPatch.applies;
+        anti-detection-kernel-compile = kernelPatch.compile;
+        anti-detection-kernel = kernelPatch.all;
+
         # Layer 3 PATCHED-QEMU boot test (VERY heavy — builds patched QEMU from
         # source on the test VM, then boots a guest under it; needs nested KVM
         # to RUN). Verifies the QEMU string replacements surface in a booted
@@ -129,6 +141,11 @@
         # 20-field regression). See tests/anti-detection/guest-smbios-patched.nix.
         anti-detection-guest-smbios-patched =
           import ./tests/anti-detection/guest-smbios-patched.nix { inherit (pkgs) lib; inherit pkgs; };
-      };
+      }
+      # Per-file kernel compiles — bisect targets for a failing combined
+      # build. Opt-in outputs only; never referenced by `all`, so they're
+      # built solely on demand (BESPOKE-PATCH-DESIGN.md §8 stage 3).
+      // pkgs.lib.mapAttrs' (n: v: pkgs.lib.nameValuePair "anti-detection-kernel-compile-${n}" v)
+        kernelPatch.perFileCompiles;
     };
 }

@@ -1,0 +1,57 @@
+From 040270c9df08613cfeba794f6b740953711cae0e Mon Sep 17 00:00:00 2001
+From: nixos-kvm <nixos-kvm@localhost>
+Date: Wed, 29 Jul 2026 06:58:21 -0500
+Subject: [PATCH] KVM: x86: spoof CPUID 0x40000000 hypervisor signature
+
+Anti-detection: rewrite the hypervisor vendor leaf so the guest sees
+"GenuineIntel" instead of "KVMKVMKVM". Defense-in-depth under the
+QEMU layer's hv-vendor-id / kvm=off handling -- this covers the leaf
+content at the KVM level.
+
+Cleaned from the source material: hot-path printk dropped, unneeded
+linux/kernel.h include hunk dropped.
+
+Lineage: pbogre's linux-6.18 KVM patch (fortesoft-co/linux-6.18-kvm-patch),
+cpuid.c hunk only. Rebased onto Linux 6.18.38.
+---
+ arch/x86/kvm/cpuid.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index 913ffb9..73b5a78 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -2096,14 +2096,29 @@ EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_cpuid);
+ 
+ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
+ {
+-	u32 eax, ebx, ecx, edx;
++	u32 eax, ebx, ecx, edx, eax_before;
+ 
+ 	if (cpuid_fault_enabled(vcpu) && !kvm_require_cpl(vcpu, 0))
+ 		return 1;
+ 
+ 	eax = kvm_rax_read(vcpu);
++	eax_before = eax;
+ 	ecx = kvm_rcx_read(vcpu);
+ 	kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, false);
++
++	/*
++	 * Anti-detection: rewrite the hypervisor vendor signature so the
++	 * guest doesn't see "KVMKVMKVM". Matches the QEMU layer's CPUID
++	 * signature spoof; defense-in-depth for the leaf content.
++	 */
++	if (eax_before == 0x40000000) {
++		const u32 *sptr = (const u32 *)"GenuineIntel";
++
++		ebx = sptr[0];
++		ecx = sptr[1];
++		edx = sptr[2];
++	}
++
+ 	kvm_rax_write(vcpu, eax);
+ 	kvm_rbx_write(vcpu, ebx);
+ 	kvm_rcx_write(vcpu, ecx);
+-- 
+2.54.0
+

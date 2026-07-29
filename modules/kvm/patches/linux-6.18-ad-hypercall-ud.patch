@@ -1,0 +1,42 @@
+From bd366e01afeb1c52296cdaaad54a00dd93e4c37e Mon Sep 17 00:00:00 2001
+From: nixos-kvm <nixos-kvm@localhost>
+Date: Wed, 29 Jul 2026 06:58:21 -0500
+Subject: [PATCH] KVM: x86: always inject #UD for hypercalls on read-execute
+ pages
+
+Anti-detection: KVM's hypercall instruction patching writes
+VMCALL/VMMCALL into guest memory. On read-execute pages the write
+faults with #PF, while bare metal delivers #UD -- a behavioral check
+used by detectors. Force the KVM_X86_QUIRK_FIX_HYPERCALL_INSN path so
+the patching never happens and the guest always gets #UD.
+
+Lineage: vfio-stealth-nix kernel/timing-patch.nix step 6 (BetterTiming
+port). Rebased onto Linux 6.18.38.
+---
+ arch/x86/kvm/x86.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index a21ebe0..f2f750e 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -10524,10 +10524,13 @@ static int emulator_fix_hypercall(struct x86_emulate_ctxt *ctxt)
+ 	unsigned long rip = kvm_rip_read(vcpu);
+ 
+ 	/*
+-	 * If the quirk is disabled, synthesize a #UD and let the guest pick up
+-	 * the pieces.
++	 * Anti-detection: always synthesize #UD (bare-metal behavior) and let
++	 * the guest pick up the pieces. KVM's hypercall instruction patching
++	 * writes VMCALL/VMMCALL into guest memory; on read-execute pages that
++	 * write faults with #PF instead of #UD -- a behavioral tell. Forcing
++	 * this check disables the patching outright.
+ 	 */
+-	if (!kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_FIX_HYPERCALL_INSN)) {
++	if (1) {
+ 		ctxt->exception.error_code_valid = false;
+ 		ctxt->exception.vector = UD_VECTOR;
+ 		ctxt->have_exception = true;
+-- 
+2.54.0
+

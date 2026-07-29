@@ -10,6 +10,10 @@ let
   hostLib = import ./lib.nix { inherit config lib pkgs; };
   cpuVendor = hostLib.cpuVendor;
 
+  # Exact kernel version + hash-verified source + the five-file
+  # anti-detection patch set (shared with the patch-build test).
+  kernelPin = import ../patches/kernel-pin.nix { inherit pkgs; };
+
   anyGuestPciPassthrough = lib.any (g: (g.passthrough.pci or [ ]) != [ ]) (
     builtins.attrValues cfg.guests
   );
@@ -58,8 +62,12 @@ in
       };
     })
 
-    # ───────── Kernel Anti-Detection Patching (RDTSC) ─────────
+    # ───────── Kernel Anti-Detection Patching ─────────
     (mkIf cfg.host.antiDetection.patchKernel {
+      # Pin the EXACT kernel the vendored patches were generated against
+      # (kernel-pin.nix). pkgs.linuxPackages_6_18 tracks the newest 6.18.x
+      # stable in nixpkgs and would drift out from under the patches'
+      # context on a nixpkgs bump — fetch the tarball, hash-verified.
       boot.kernelPackages = if cfg.host.antiDetection.customKernelSrcUrl != null then
         pkgs.linuxPackagesFor (pkgs.linux.override {
           argsOverride = {
@@ -72,17 +80,24 @@ in
           };
         })
       else
-        pkgs.linuxPackages_6_1;
+        pkgs.linuxPackagesFor (pkgs.linux_6_18.override {
+          argsOverride = {
+            inherit (kernelPin) src version;
+            modDirVersion = kernelPin.version;
+          };
+        });
 
-      boot.kernelPatches = [
-        {
-          name = "kvm-rdtsc-spoof";
-          patch = if cfg.host.antiDetection.customKernelPatch != null then
-            cfg.host.antiDetection.customKernelPatch
-          else
-            ../patches/linux-6.1-rdtsc.patch;
-        }
-      ];
+      # customKernelPatch is an escape hatch: when set, it REPLACES the
+      # entire vendored five-file set with the caller's single patch.
+      boot.kernelPatches = if cfg.host.antiDetection.customKernelPatch != null then
+        [
+          {
+            name = "kvm-anti-detection-custom";
+            patch = cfg.host.antiDetection.customKernelPatch;
+          }
+        ]
+      else
+        kernelPin.antiDetectionPatches;
     })
   ];
 }

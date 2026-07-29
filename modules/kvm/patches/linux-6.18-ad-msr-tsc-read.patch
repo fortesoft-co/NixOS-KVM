@@ -1,0 +1,45 @@
+From ad29ce322d8f1f25b77460b08bdc8cdb50fa0162 Mon Sep 17 00:00:00 2001
+From: nixos-kvm <nixos-kvm@localhost>
+Date: Wed, 29 Jul 2026 06:58:21 -0500
+Subject: [PATCH] KVM: x86: scale user-mode MSR_IA32_TSC reads (close rdmsr
+ bypass)
+
+Anti-detection: an RDTSC-only spoof leaves a hole -- in-guest kernel
+code (anti-cheat drivers) can read the TSC directly via rdmsr(0x10),
+which never VM-exits and would return the unscaled value. Apply the
+same CPL/protmode gate + divisor in kvm_get_msr_common's MSR_IA32_TSC
+case so both paths tell the same story.
+
+Uses a compiled-in divisor default of 8, kept in sync with the
+kvm_intel rdtsc_user_divisor module_param default (cross-module
+sharing would require an export; deferred to a follow-up).
+
+Lineage: dmfrpro's Hypervisor-Phantom zen-6.14.10-vmx.patch (x86.c
+hunk). Rebased onto Linux 6.18.38.
+---
+ arch/x86/kvm/x86.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index a21ebe0..e54ef60 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -4453,6 +4453,15 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ 			ratio = vcpu->arch.tsc_scaling_ratio;
+ 		}
+ 
++		/*
++		 * Anti-detection: apply the same user-mode TSC scaling as the
++		 * VMX RDTSC handler so in-guest kernel rdmsr(0x10) reads can't
++		 * bypass the spoof. Compiled-in default; keep in sync with
++		 * rdtsc_user_divisor's default (kvm_intel).
++		 */
++		if (kvm_x86_call(get_cpl)(vcpu) != 0 || !is_protmode(vcpu))
++			ratio /= 8;
++
+ 		msr_info->data = kvm_scale_tsc(rdtsc(), ratio) + offset;
+ 		break;
+ 	}
+-- 
+2.54.0
+

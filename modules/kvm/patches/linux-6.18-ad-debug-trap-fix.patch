@@ -1,0 +1,98 @@
+From 6e036992f16e597c07fb8f7a1f073cd5f4474e62 Mon Sep 17 00:00:00 2001
+From: nixos-kvm <nixos-kvm@localhost>
+Date: Wed, 29 Jul 2026 06:58:21 -0500
+Subject: [PATCH] KVM: x86: report combined TF + hardware-breakpoint DR6
+ correctly
+
+Anti-detection: Intel's TF+DR0 trick sets the trap flag and a hardware
+breakpoint simultaneously, then checks DR6 on the resulting #DB. Bare
+metal reports BS alongside B0-B3; stock KVM's kvm_vcpu_do_singlestep
+only ever reports BS, revealing the hypervisor.
+
+Rewrite kvm_vcpu_do_singlestep to accumulate DR6 properly
+(kvm_vcpu_check_hw_bp + TF check) and force KVM_EXIT_DEBUG when BS and
+B0-B3 coincide.
+
+Lineage: KBapna's PVE-Kernel-Patches Trap.patch (rated stable),
+verbatim logic, re-anchored onto Linux 6.18.38 (kvm_x86_call idiom).
+---
+ arch/x86/include/asm/kvm_host.h |  6 +++++
+ arch/x86/kvm/x86.c              | 41 ++++++++++++++++++++++++++++-----
+ 2 files changed, 41 insertions(+), 6 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 0386668..fbe28b8 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -235,6 +235,12 @@ enum x86_intercept_stage;
+ #define DR6_BS		(1 << 14)
+ #define DR6_BT		(1 << 15)
+ #define DR6_RTM		(1 << 16)
++
++#define DR6_B0		(1ULL << 0)
++#define DR6_B1		(1ULL << 1)
++#define DR6_B2		(1ULL << 2)
++#define DR6_B3		(1ULL << 3)
++
+ /*
+  * DR6_ACTIVE_LOW combines fixed-1 and active-low bits.
+  * We can regard all the bits in DR6_FIXED_1 as active_low bits;
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index a21ebe0..fe638ea 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -9244,16 +9244,45 @@ static int kvm_vcpu_check_hw_bp(unsigned long addr, u32 type, u32 dr7,
+ static int kvm_vcpu_do_singlestep(struct kvm_vcpu *vcpu)
+ {
+ 	struct kvm_run *kvm_run = vcpu->run;
++	u64 dr6 = 0;
++	unsigned long current_rip = kvm_get_linear_rip(vcpu);
++	bool exit_to_userspace = false;
+ 
+-	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP) {
+-		kvm_run->debug.arch.dr6 = DR6_BS | DR6_ACTIVE_LOW;
+-		kvm_run->debug.arch.pc = kvm_get_linear_rip(vcpu);
++	/* Accumulate DR6 bits for hardware breakpoints */
++	if (vcpu->arch.dr7 & DR7_BP_EN_MASK)
++		dr6 |= kvm_vcpu_check_hw_bp(current_rip, 0, vcpu->arch.dr7,
++					    vcpu->arch.db);
++
++	/* Set BS bit if trap flag is active */
++	if (kvm_x86_call(get_rflags)(vcpu) & X86_EFLAGS_TF)
++		dr6 |= DR6_BS;
++
++	/* If no debug event recognized, nothing to do */
++	if (!dr6)
++		return 1;
++
++	/*
++	 * Anti-detection: force a userspace exit for external debuggers, and
++	 * for the combined trap-flag + hardware-breakpoint case (Intel's
++	 * TF+DR0 DR6 trick): bare metal reports BS alongside B0-B3, stock
++	 * KVM would drop the breakpoint bits and queue a plain #DB.
++	 */
++	if ((vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP) ||
++	    (dr6 & DR6_BS && (dr6 & (DR6_B0 | DR6_B1 | DR6_B2 | DR6_B3))))
++		exit_to_userspace = true;
++
++	if (exit_to_userspace) {
++		dr6 |= DR6_ACTIVE_LOW; /* KVM's debug exit convention */
++		kvm_run->debug.arch.dr6 = dr6;
++		kvm_run->debug.arch.pc = current_rip;
+ 		kvm_run->debug.arch.exception = DB_VECTOR;
+ 		kvm_run->exit_reason = KVM_EXIT_DEBUG;
+-		return 0;
++		return 0; /* Handled by KVM_EXIT_DEBUG */
+ 	}
+-	kvm_queue_exception_p(vcpu, DB_VECTOR, DR6_BS);
+-	return 1;
++
++	/* Queue exception directly for simple single-step or isolated BP */
++	kvm_queue_exception_p(vcpu, DB_VECTOR, dr6);
++	return 1; /* Handled by guest exception */
+ }
+ 
+ int kvm_skip_emulated_instruction(struct kvm_vcpu *vcpu)
+-- 
+2.54.0
+
